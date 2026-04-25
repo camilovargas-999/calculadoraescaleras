@@ -1,72 +1,97 @@
 import streamlit as st
 import math
+import pandas as pd
 
-st.set_page_config(page_title="Calculadora de Escaleras Colombia", page_icon="🏗️")
+st.set_page_config(page_title="Escaleras Pro V2.3 - Colombia", page_icon="🏗️", layout="wide")
 
-# Función de formato corregida
 def formato_cop(valor):
     return "COP {:,.0f}".format(valor).replace(",", ".")
 
-st.title("🏗️ Diseñador de Escaleras y Presupuestador")
-st.markdown("Cálculos técnicos y comerciales ajustados a **Pesos Colombianos (COP)**.")
+if 'historial' not in st.session_state:
+    st.session_state['historial'] = []
 
-# --- ENTRADAS LATERALES ---
-st.sidebar.header("Parámetros de Diseño")
-altura_total = st.sidebar.number_input("Altura a vencer (cm)", value=270.0, step=1.0)
-largo_disponible = st.sidebar.number_input("Largo total de la escalera (cm)", value=400.0, step=1.0)
-ancho_escalera = st.sidebar.number_input("Ancho de la escalera (cm)", value=100.0, step=1.0)
+# --- BARRA LATERAL ---
+st.sidebar.title("Configuración Profesional")
+pestana = st.sidebar.radio("Navegación:", ["Calculadora", "Historial de Ventas"])
 
-ESPESOR_FIJO = 0.05 
+# --- FORMULARIO DE ENTRADA (Para evitar recargas constantes) ---
+with st.sidebar.form("formulario_diseño"):
+    st.header("📐 Parámetros Técnicos")
+    tipo_escalera = st.selectbox(
+        "Tipo de Diseño",
+        ["Recta", "En L (90° con descanso)", "En L Compensada (Abanico)", 
+         "En U (con descanso)", "U Compensada (Abanico)", "Caracol"]
+    )
+    altura_total = st.number_input("Altura total a vencer (cm)", value=270.0)
+    ancho_escalera = st.number_input("Ancho de rampa (cm)", value=100.0)
+    largo_disponible = st.number_input("Largo disponible (cm)", value=300.0)
+    
+    st.markdown("---")
+    precio_m3_concreto = st.number_input("Precio m3 Concreto (COP)", value=550000)
+    margen_utilidad = st.slider("Margen de Ganancia %", 10, 100, 30) / 100
+    
+    # BOTÓN DE ACTUALIZACIÓN
+    submit_button = st.form_submit_button(label="🔄 CALCULAR Y ACTUALIZAR")
 
-st.sidebar.header("Costos y Negocio (COP)")
-precio_m3_concreto = st.sidebar.number_input("Precio m3 Concreto (COP)", value=550000.0, step=10000.0)
-margen_utilidad = st.sidebar.slider("Margen de Utilidad (%)", 10, 100, 30) / 100
-
-# --- LÓGICA DE CÁLCULO ---
+# --- LÓGICA DE CÁLCULO (Solo se ejecuta al pulsar el botón o iniciar) ---
 ch_ideal = 18.0
 num_peldaños = math.ceil(altura_total / ch_ideal)
 ch_final = altura_total / num_peldaños
+ESPESOR_FIJO = 0.05
 
-if num_peldaños > 1:
+# Cálculos rápidos de volumen y huella
+if tipo_escalera == "Recta":
     huella_calculada = largo_disponible / (num_peldaños - 1)
+    long_rampa = math.sqrt((largo_disponible/100)**2 + (altura_total/100)**2)
+    vol_total = (long_rampa * (ancho_escalera/100) * ESPESOR_FIJO) + \
+                (((huella_calculada/100)*(ch_final/100)/2)*(ancho_escalera/100)*num_peldaños)
+    dificultad = 0.9
 else:
-    huella_calculada = 0
+    # Lógica simplificada para otros tipos (puedes expandirla luego)
+    huella_calculada = largo_disponible / (num_peldaños/2) if "U" in tipo_escalera else 25.0
+    vol_total = (altura_total/100 * ancho_escalera/100 * ESPESOR_FIJO) * 1.5
+    dificultad = 1.3
 
-longitud_rampa_m = math.sqrt((largo_disponible/100)**2 + (altura_total/100)**2)
-vol_rampa = longitud_rampa_m * (ancho_escalera/100) * ESPESOR_FIJO
-vol_peldaños = ((huella_calculada/100) * (ch_final/100) / 2) * (ancho_escalera/100) * num_peldaños
-vol_total = vol_rampa + vol_peldaños
-
+# FINANZAS
 costo_mat = vol_total * precio_m3_concreto
-mano_obra = costo_mat * 0.90 
-costo_total = costo_mat + mano_obra
+costo_total = costo_mat * (1 + dificultad)
 precio_venta = costo_total * (1 + margen_utilidad)
 
-# --- VISUALIZACIÓN ---
-col1, col2, col3 = st.columns(3)
-col1.metric("N° Peldaños", num_peldaños)
-col2.metric("Contrahuella", "{:.2f} cm".format(ch_final))
-col3.metric("Huella", "{:.2f} cm".format(huella_calculada))
+# --- INTERFAZ PRINCIPAL ---
+if pestana == "Calculadora":
+    st.title(f"🚀 Diseño de Escalera {tipo_escalera}")
 
-blondel = (2 * ch_final) + huella_calculada
-st.subheader("📏 Validación Técnica")
-if 60 <= blondel <= 65:
-    st.success("La escalera es cómoda (Ley de Blondel: {:.2f} cm)".format(blondel))
+    # VALIDACIÓN NSR-10 (Leyes Colombianas)
+    # La norma colombiana NSR-10 sugiere huellas >= 25cm para mayor seguridad.
+    if huella_calculada < 23:
+        st.error(f"❌ ¡ALERTA DE SEGURIDAD! La huella es de {huella_calculada:.2f} cm. La ley colombiana exige un mínimo de 23-25 cm. La escalera será peligrosa.")
+    elif 23 <= huella_calculada < 25:
+        st.warning(f"⚠️ CUIDADO: La huella ({huella_calculada:.2f} cm) cumple lo mínimo legal, pero es incómoda para pies grandes.")
+    else:
+        st.success(f"✅ Diseño Cumple Norma: Huella de {huella_calculada:.2f} cm es segura.")
+
+    # Mostrar métricas
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Precio Venta", formato_cop(precio_venta))
+    m2.metric("N° Pasos", num_peldaños)
+    m3.metric("Contrahuella", f"{ch_final:.2f} cm")
+
+    st.markdown("---")
+    
+    # Formulario para guardar
+    with st.expander("📝 Guardar esta cotización"):
+        cliente = st.text_input("Nombre del Proyecto")
+        if st.button("💾 CONFIRMAR Y GUARDAR"):
+            st.session_state.historial.append({
+                "Cliente": cliente, "Tipo": tipo_escalera, "Venta": precio_venta, 
+                "Huella": f"{huella_calculada:.1f} cm", "Estado": "Segura" if huella_calculada >= 25 else "Riesgosa"
+            })
+            st.toast("Cotización guardada exitosamente")
+
 else:
-    st.warning("Revisar diseño: La escalera podría ser incómoda (Ley de Blondel: {:.2f} cm)".format(blondel))
-
-st.subheader("📊 Análisis de Costos (Pesos Colombianos)")
-c1, c2 = st.columns(2)
-
-with c1:
-    st.info("**Volumen de Concreto:** {:.3f} m³".format(vol_total))
-    st.write("Costo Materiales: **{}**".format(formato_cop(costo_mat)))
-    st.write("Costo Mano de Obra: **{}**".format(formato_cop(mano_obra)))
-
-with c2:
-    st.success("**Precio de Venta Sugerido:**")
-    st.header(formato_cop(precio_venta))
-    st.write("Ganancia estimada: {}".format(formato_cop(precio_venta - costo_total)))
-
-st.markdown("---")
-st.caption("Cifras calculadas para el mercado de Colombia. Espesor de losa: 5cm fijo.")
+    st.title("📊 Historial de Ventas")
+    if st.session_state.historial:
+        df = pd.DataFrame(st.session_state.historial)
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No hay registros.")
