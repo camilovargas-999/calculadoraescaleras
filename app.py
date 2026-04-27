@@ -2,7 +2,7 @@ import streamlit as st
 import math
 import pandas as pd
 
-st.set_page_config(page_title="Escaleras Pro V3.3 - Colombia", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="Escaleras Pro V3.4 - Colombia", page_icon="🏗️", layout="wide")
 
 def formato_cop(valor):
     return "COP {:,.0f}".format(valor).replace(",", ".")
@@ -51,8 +51,9 @@ with st.sidebar.form("formulario_diseño"):
         fondo_calc = st.number_input("Hueco (cm)", value=100.0)   
     
     st.markdown("---")
-    precio_m3_concreto = st.number_input("Precio m3 Concreto (COP)", value=550000)
-    margen_utilidad = st.slider("Margen de Ganancia %", 10, 100, 30) / 100
+    # VALORES POR DEFAULT ACTUALIZADOS: 700.000 y 50%
+    precio_m3_concreto = st.number_input("Precio m3 Concreto (COP)", value=700000)
+    margen_utilidad = st.slider("Margen de Ganancia %", 10, 100, 50) / 100
     
     submit_button = st.form_submit_button(label="🔄 CALCULAR AHORA")
 
@@ -130,7 +131,6 @@ if pestana == "Calculadora":
 
     st.subheader("📦 Desglose de Materiales")
     mat_col1, mat_col2 = st.columns(2)
-    # CORRECCIÓN DE IDENTACIÓN AQUÍ:
     with mat_col1:
         st.info("**Mezcla (3000 PSI)**")
         st.write(f"🔹 Cemento: {cemento_bultos} Bultos")
