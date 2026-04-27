@@ -2,7 +2,7 @@ import streamlit as st
 import math
 import pandas as pd
 
-st.set_page_config(page_title="Escaleras Pro V3.1 - Colombia", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="Escaleras Pro V3.2 - Colombia", page_icon="🏗️", layout="wide")
 
 def formato_cop(valor):
     return "COP {:,.0f}".format(valor).replace(",", ".")
@@ -14,6 +14,9 @@ if 'historial' not in st.session_state:
 st.sidebar.title("Configuración Profesional")
 pestana = st.sidebar.radio("Navegación:", ["Calculadora", "Historial de Ventas"])
 
+# Inicializamos la orientación por defecto
+orientacion_sel = "N/A"
+
 with st.sidebar.form("formulario_diseño"):
     st.header("📐 Parámetros de Diseño")
     
@@ -22,9 +25,11 @@ with st.sidebar.form("formulario_diseño"):
         ["Recta", "En L con abanico", "En U con abanico", "Caracol"]
     )
 
-    orientacion = "N/A"
+    # Corregimos la captura de orientación
     if tipo_escalera != "Recta":
-        orientacion = st.radio("Orientación (Giro)", ["Derecha 👉", "Izquierda 👈"])
+        orientacion_sel = st.radio("Orientación (Giro)", ["Derecha 👉", "Izquierda 👈"])
+    else:
+        orientacion_sel = "N/A"
 
     estilo_construccion = st.selectbox(
         "Tipo de estructura o acabado",
@@ -58,7 +63,6 @@ num_peldaños = math.ceil(altura_total / ch_ideal)
 ch_final = altura_total / num_peldaños
 longitud_desarrollo_m = math.sqrt((largo_calc/100)**2 + (altura_total/100)**2)
 
-# Cálculo de Huella y Ángulo
 if tipo_escalera == "Recta":
     huella_calculada = largo_calc / (num_peldaños - 1)
     angulo_rad = math.atan(altura_total / largo_calc)
@@ -80,7 +84,7 @@ else:
 
 angulo_deg = math.degrees(angulo_rad)
 
-# Determinación de Ángulo Óptimo (CORREGIDO)
+# Estado del Ángulo
 if 30 <= angulo_deg <= 37:
     estado_angulo = "✅ Óptimo"
 elif (26 <= angulo_deg < 30) or (37 < angulo_deg <= 42):
@@ -88,7 +92,12 @@ elif (26 <= angulo_deg < 30) or (37 < angulo_deg <= 42):
 else:
     estado_angulo = "🚨 Crítico"
 
-# Materiales y Finanzas
+# Finanzas y Materiales
+recargo = 1.10 if "+" in estilo_construccion else 1.0
+costo_mat = vol_total * precio_m3_concreto
+costo_total = (costo_mat + (costo_mat * dificultad_base)) * recargo
+precio_venta = costo_total * (1 + margen_utilidad)
+
 vol_con_desperdicio = vol_total * 1.05
 cemento_bultos = math.ceil(vol_con_desperdicio * 7.0)
 arena_m3 = vol_con_desperdicio * 0.52
@@ -99,11 +108,6 @@ varillas_6m = math.ceil(metros_3_8 / 6)
 num_grafiles_trans = math.ceil((longitud_desarrollo_m * 100 / 20) + 1)
 grafiles_6m = math.ceil((num_grafiles_trans * (fondo_calc / 100) * 1.10) / 6)
 alambre_kg = math.ceil((num_varillas_long * num_grafiles_trans) * 0.02)
-
-recargo = 1.10 if "+" in estilo_construccion else 1.0
-costo_mat = vol_total * precio_m3_concreto
-costo_total = (costo_mat + (costo_mat * dificultad_base)) * recargo
-precio_venta = costo_total * (1 + margen_utilidad)
 
 # --- INTERFAZ DE RESULTADOS ---
 if pestana == "Calculadora":
@@ -119,37 +123,15 @@ if pestana == "Calculadora":
     val_col1, val_col2, val_col3 = st.columns(3)
     val_col1.metric("VALOR TOTAL VENTA", formato_cop(precio_venta))
     val_col2.metric("Inclinación", f"{angulo_deg:.1f}°", delta=estado_angulo, delta_color="normal")
-    val_col3.metric("Giro / Orientación", orientacion)
+    
+    # Aquí es donde se muestra la orientación seleccionada
+    val_col3.metric("Giro / Orientación", orientacion_sel)
 
     st.markdown("---")
 
-    # Alertas de Huella para Recta
     if tipo_escalera == "Recta" and huella_calculada < 24:
-        st.error(f"🚨 ERROR TÉCNICO: La huella de {huella_calculada:.1f}cm es menor al mínimo de 24cm configurado.")
-    elif huella_calculada < 23:
-        st.error(f"❌ ALERTA NSR-10: Huella de {huella_calculada:.1f}cm es ilegal en Colombia.")
+        st.error(f"🚨 ERROR TÉCNICO: La huella de {huella_calculada:.1f}cm es menor al mínimo de 24cm.")
 
     st.subheader("📦 Desglose de Materiales")
     mat_col1, mat_col2 = st.columns(2)
     with mat_col1:
-        st.info("**Mezcla (3000 PSI)**")
-        st.write(f"🔹 Cemento: {cemento_bultos} Bultos")
-        st.write(f"🔹 Arena: {arena_m3:.2f} m³")
-        st.write(f"🔹 Triturado: {triturado_m3:.2f} m³")
-    
-    with mat_col2:
-        st.warning("**Refuerzo de Acero**")
-        st.write(f"🔸 Varilla 3/8: {varillas_6m} unids (6m)")
-        st.write(f"🔸 Grafil 1/4: {grafiles_6m} unids (6m)")
-        st.write(f"🔸 Alambre Negro: {alambre_kg} kg")
-
-    st.markdown("---")
-    
-    with st.expander("💾 Guardar en el Historial"):
-        proy = st.text_input("Nombre de la Obra")
-        if st.button("CONFIRMAR"):
-            st.session_state.historial.append({"Obra": proy, "Tipo": tipo_escalera, "Venta": precio_venta})
-            st.success("Guardado")
-else:
-    st.title("📊 Historial")
-    st.table(pd.DataFrame(st.session_state.historial))
