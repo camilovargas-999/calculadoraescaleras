@@ -2,7 +2,7 @@ import streamlit as st
 import math
 import pandas as pd
 
-st.set_page_config(page_title="Escaleras Pro V3.2 - Colombia", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="Escaleras Pro V3.3 - Colombia", page_icon="🏗️", layout="wide")
 
 def formato_cop(valor):
     return "COP {:,.0f}".format(valor).replace(",", ".")
@@ -25,7 +25,6 @@ with st.sidebar.form("formulario_diseño"):
         ["Recta", "En L con abanico", "En U con abanico", "Caracol"]
     )
 
-    # Corregimos la captura de orientación
     if tipo_escalera != "Recta":
         orientacion_sel = st.radio("Orientación (Giro)", ["Derecha 👉", "Izquierda 👈"])
     else:
@@ -84,7 +83,6 @@ else:
 
 angulo_deg = math.degrees(angulo_rad)
 
-# Estado del Ángulo
 if 30 <= angulo_deg <= 37:
     estado_angulo = "✅ Óptimo"
 elif (26 <= angulo_deg < 30) or (37 < angulo_deg <= 42):
@@ -92,7 +90,7 @@ elif (26 <= angulo_deg < 30) or (37 < angulo_deg <= 42):
 else:
     estado_angulo = "🚨 Crítico"
 
-# Finanzas y Materiales
+# Materiales y Finanzas
 recargo = 1.10 if "+" in estilo_construccion else 1.0
 costo_mat = vol_total * precio_m3_concreto
 costo_total = (costo_mat + (costo_mat * dificultad_base)) * recargo
@@ -123,8 +121,6 @@ if pestana == "Calculadora":
     val_col1, val_col2, val_col3 = st.columns(3)
     val_col1.metric("VALOR TOTAL VENTA", formato_cop(precio_venta))
     val_col2.metric("Inclinación", f"{angulo_deg:.1f}°", delta=estado_angulo, delta_color="normal")
-    
-    # Aquí es donde se muestra la orientación seleccionada
     val_col3.metric("Giro / Orientación", orientacion_sel)
 
     st.markdown("---")
@@ -134,4 +130,24 @@ if pestana == "Calculadora":
 
     st.subheader("📦 Desglose de Materiales")
     mat_col1, mat_col2 = st.columns(2)
+    # CORRECCIÓN DE IDENTACIÓN AQUÍ:
     with mat_col1:
+        st.info("**Mezcla (3000 PSI)**")
+        st.write(f"🔹 Cemento: {cemento_bultos} Bultos")
+        st.write(f"🔹 Arena: {arena_m3:.2f} m³")
+        st.write(f"🔹 Triturado: {triturado_m3:.2f} m³")
+    
+    with mat_col2:
+        st.warning("**Refuerzo de Acero**")
+        st.write(f"🔸 Varilla 3/8: {varillas_6m} unids")
+        st.write(f"🔸 Grafil 1/4: {grafiles_6m} unids")
+        st.write(f"🔸 Alambre Negro: {alambre_kg} kg")
+
+    with st.expander("💾 Guardar"):
+        proy = st.text_input("Nombre de la Obra")
+        if st.button("CONFIRMAR"):
+            st.session_state.historial.append({"Obra": proy, "Tipo": tipo_escalera, "Venta": precio_venta, "Orientacion": orientacion_sel})
+            st.success("Guardado")
+else:
+    st.title("📊 Historial")
+    st.table(pd.DataFrame(st.session_state.historial))
