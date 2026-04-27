@@ -2,117 +2,115 @@ import streamlit as st
 import math
 import pandas as pd
 
-st.set_page_config(page_title="Escaleras Pro V3.7 - Mano de Obra Fija", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="Escaleras Pro V3.9", page_icon="🏗️", layout="wide")
 
-# --- VALORES CONFIGURADOS ---
-PRECIO_CEMENTO = 32000
-PRECIO_MIXTO = 190000
-PRECIO_VARILLA_38 = 24000
-PRECIO_GRAFIL_14 = 5000
-PRECIO_ALAMBRE = 10000
-PAGO_POR_PERSONA = 90000  
-CANTIDAD_PERSONAS = 4
-
-def formato_cop(valor):
-    return "COP {:,.0f}".format(valor).replace(",", ".")
+# --- INICIALIZACIÓN DE PRECIOS ---
+if 'precios' not in st.session_state:
+    st.session_state['precios'] = {
+        'cemento': 32000.0,
+        'mixto': 190000.0,
+        'varilla_38': 24000.0,
+        'grafil_14': 5000.0,
+        'alambre': 10000.0,
+        'pago_persona': 90000.0,
+        'cantidad_personas': 4
+    }
 
 if 'historial' not in st.session_state:
     st.session_state['historial'] = []
 
-# --- BARRA LATERAL ---
-st.sidebar.title("Configuración Profesional")
-pestana = st.sidebar.radio("Navegación:", ["Calculadora", "Historial de Ventas"])
+def formato_cop(valor):
+    return "COP {:,.0f}".format(valor).replace(",", ".")
 
-orientacion_sel = "N/A"
+# --- MENÚ DE NAVEGACIÓN (BOTONES VISIBLES) ---
+st.sidebar.title("🛠️ MENÚ PRINCIPAL")
+pestana = st.sidebar.radio(
+    "Seleccione una sección:",
+    ["🚀 Calculadora de Obra", "💰 Configuración de Costos", "📊 Historial de Ventas"]
+)
 
-with st.sidebar.form("formulario_diseño"):
-    st.header("📐 Parámetros de Diseño")
-    tipo_escalera = st.selectbox("Tipo de Diseño", ["Recta", "En L con abanico", "En U con abanico", "Caracol"])
+# --- SECCIÓN 1: CONFIGURACIÓN DE COSTOS ---
+if pestana == "💰 Configuración de Costos":
+    st.title("💰 Ajuste de Precios de Materiales y Personal")
+    st.write("Modifique los valores aquí. Estos cambios afectarán a todos los cálculos nuevos.")
     
-    if tipo_escalera != "Recta":
-        orientacion_sel = st.radio("Orientación (Giro)", ["Derecha 👉", "Izquierda 👈"])
+    with st.form("form_precios"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("🧱 Precios de Materiales")
+            cem = st.number_input("Bulto Cemento (50kg)", value=st.session_state.precios['cemento'])
+            mix = st.number_input("Mixto m3 (Arena+Gravilla)", value=st.session_state.precios['mixto'])
+            var = st.number_input("Varilla 3/8 (6m)", value=st.session_state.precios['varilla_38'])
+            gra = st.number_input("Grafil 1/4 (6m)", value=st.session_state.precios['grafil_14'])
+            ala = st.number_input("Alambre Negro (kg)", value=st.session_state.precios['alambre'])
+        
+        with col2:
+            st.subheader("👷 Mano de Obra")
+            pago = st.number_input("Pago por cada persona ($)", value=st.session_state.precios['pago_persona'])
+            cant = st.number_input("Número de trabajadores", value=st.session_state.precios['cantidad_personas'], step=1)
+        
+        if st.form_submit_button("✅ GUARDAR Y ACTUALIZAR PRECIOS"):
+            st.session_state.precios.update({
+                'cemento': cem, 'mixto': mix, 'varilla_38': var,
+                'grafil_14': gra, 'alambre': ala, 'pago_persona': pago,
+                'cantidad_personas': cant
+            })
+            st.success("¡Precios actualizados! Ya puedes ir a la Calculadora.")
+
+# --- SECCIÓN 2: CALCULADORA ---
+elif pestana == "🚀 Calculadora de Obra":
+    st.title("🚀 Calculadora de Escaleras")
     
-    estilo_construccion = st.selectbox("Acabado", ["Normal", "Sin espaldar (+10%)", "Con insoluz (+10%)"])
+    with st.sidebar.form("diseno"):
+        st.header("📐 Medidas")
+        tipo = st.selectbox("Tipo de Diseño", ["Recta", "En L con abanico", "En U con abanico", "Caracol"])
+        alt = st.number_input("Altura total (cm)", value=240.0)
+        lar = st.number_input("Fondo/Desarrollo (cm)", value=300.0)
+        anc = st.number_input("Ancho escalera (cm)", value=100.0)
+        margen = st.slider("Tu Ganancia %", 10, 200, 50) / 100
+        st.form_submit_button("🔄 CALCULAR")
+
+    # --- LÓGICA ---
+    pasos = math.ceil(alt / 18)
+    ch = alt / pasos
+    huella = lar / (pasos - 1) if tipo == "Recta" else 28.0
+    long_m = math.sqrt((lar/100)**2 + (alt/100)**2)
+    vol = (long_m * (anc/100) * 0.11) * (1.2 if tipo != "Recta" else 1.0)
     
+    # Cantidades
+    bls = math.ceil(vol * 7.5)
+    mix_m3 = vol * 1.1
+    v38 = math.ceil(((anc/15 + 1) * long_m * 1.1) / 6)
+    g14 = math.ceil(((long_m*100/20 + 1) * (anc/100) * 1.1) / 6)
+    ala_kg = math.ceil(vol * 8) # Estimación rápida kg/m3
+    
+    # Costos desde el estado de sesión
+    p = st.session_state.precios
+    c_mat = (bls * p['cemento']) + (mix_m3 * p['mixto']) + (v38 * p['varilla_38']) + (g14 * p['grafil_14']) + (ala_kg * p['alambre'])
+    c_mo = p['pago_persona'] * p['cantidad_personas']
+    c_total = c_mat + c_mo
+    venta = c_total * (1 + margen)
+
+    # --- RESULTADOS ---
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Pasos", pasos)
+    col2.metric("Huella", f"{huella:.1f} cm")
+    col3.metric("Contrahuella", f"{ch:.1f} cm")
+
+    st.subheader("💰 Resumen Comercial")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("PRECIO VENTA", formato_cop(venta))
+    m2.metric("Costo Directo", formato_cop(c_total))
+    m3.metric("Utilidad Bruta", formato_cop(venta - c_total))
+
     st.markdown("---")
-    altura_total = st.number_input("Altura Total (cm)", value=240.0)
-    largo_calc = st.number_input("Fondo/Desarrollo (cm)", value=300.0) 
-    fondo_calc = st.number_input("Ancho Escalera (cm)", value=100.0)   
-    
-    st.markdown("---")
-    margen_utilidad = st.slider("Margen de Ganancia %", 10, 100, 50) / 100
-    submit_button = st.form_submit_button(label="🔄 CALCULAR TODO")
+    st.info(f"🧱 **Materiales:** {bls} bultos de cemento, {mix_m3:.2f} m3 de mixto, {v38} varillas 3/8.")
+    st.success(f"👷 **Mano de Obra:** {p['cantidad_personas']} personas / Total MO: {formato_cop(c_mo)}")
 
-# --- LÓGICA TÉCNICA ---
-ch_ideal = 18.0
-num_peldaños = math.ceil(altura_total / ch_ideal)
-ch_final = altura_total / num_peldaños
-longitud_desarrollo_m = math.sqrt((largo_calc/100)**2 + (altura_total/100)**2)
-
-if tipo_escalera == "Recta":
-    huella_calculada = largo_calc / (num_peldaños - 1)
-    vol_total = (longitud_desarrollo_m * (fondo_calc/100) * 0.10) + \
-                (((huella_calculada/100)*(ch_final/100)/2)*(fondo_calc/100)*num_peldaños)
+# --- SECCIÓN 3: HISTORIAL ---
 else:
-    huella_calculada = 28.0
-    vol_total = (longitud_desarrollo_m * (fondo_calc/100) * 0.12) * 1.2
-
-# --- CANTIDADES ---
-vol_con_desperdicio = vol_total * 1.05
-cemento_bultos = math.ceil(vol_con_desperdicio * 7.5)
-mixto_m3 = vol_con_desperdicio * 1.1
-num_varillas_long = math.ceil((fondo_calc / 15) + 1)
-varillas_38_unid = math.ceil((num_varillas_long * longitud_desarrollo_m * 1.10) / 6)
-num_grafiles = math.ceil((longitud_desarrollo_m * 100 / 20) + 1)
-grafiles_unid = math.ceil((num_grafiles * (fondo_calc / 100) * 1.10) / 6)
-alambre_kg = math.ceil((num_varillas_long * num_grafiles) * 0.015)
-
-# --- COSTOS ---
-costo_cemento = cemento_bultos * PRECIO_CEMENTO
-costo_mixto = mixto_m3 * PRECIO_MIXTO
-costo_acero = (varillas_38_unid * PRECIO_VARILLA_38) + (grafiles_unid * PRECIO_GRAFIL_14) + (alambre_kg * PRECIO_ALAMBRE)
-costo_materiales_total = costo_cemento + costo_mixto + costo_acero
-
-# NUEVA LÓGICA DE MANO DE OBRA: COSTO FIJO
-costo_mano_obra_total = PAGO_POR_PERSONA * CANTIDAD_PERSONAS # $360.000
-
-costo_directo_total = (costo_materiales_total + costo_mano_obra_total) * (1.10 if "+" in estilo_construccion else 1.0)
-precio_venta_final = costo_directo_total * (1 + margen_utilidad)
-
-# --- INTERFAZ ---
-if pestana == "Calculadora":
-    st.title(f"🚀 Cotización: {tipo_escalera}")
-    
-    st.subheader("🪜 Datos de Construcción")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Pasos", int(num_peldaños))
-    c2.metric("Huella", f"{huella_calculada:.2f} cm")
-    c3.metric("Contrahuella", f"{ch_final:.2f} cm")
-
-    st.subheader("💰 Resultado de la Operación")
-    v1, v2, v3 = st.columns(3)
-    v1.metric("VENTA TOTAL", formato_cop(precio_venta_final))
-    v2.metric("Inversión (Mat+MO)", formato_cop(costo_directo_total))
-    v3.metric("Ganancia Neta", formato_cop(precio_venta_final - costo_directo_total))
-
-    st.markdown("---")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.success(f"👷 **Mano de Obra (Fija)**")
-        st.write(f"• Personal: **{CANTIDAD_PERSONAS} personas**")
-        st.write(f"• Pago por persona: **{formato_cop(PAGO_POR_PERSONA)}**")
-        st.write(f"• Total Mano de Obra: **{formato_cop(costo_mano_obra_total)}**")
-    
-    with col2:
-        st.info("🧱 **Materiales**")
-        st.write(f"• Cemento: {cemento_bultos} bls / Mixto: {mixto_m3:.2f} m³")
-        st.write(f"• Costo Total Materiales: **{formato_cop(costo_materiales_total)}**")
-
-    st.markdown("---")
-    
-    with st.expander("💾 Guardar"):
-        proy = st.text_input("Nombre de la Obra")
-        if st.button("CONFIRMAR"):
-            st.session_state.historial.append({"Obra": proy, "Venta": precio_venta_final})
-            st.success("Guardado")
+    st.title("📊 Historial de Cotizaciones")
+    if st.session_state.historial:
+        st.table(pd.DataFrame(st.session_state.historial))
+    else:
+        st.info("No hay proyectos guardados todavía.")
