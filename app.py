@@ -39,12 +39,12 @@ with st.sidebar.form("formulario_diseño"):
         hueco_salida = st.number_input("Hueco de salida (cm)", value=100.0)
         llegada_fondo = st.number_input("Llegada (Fondo) (cm)", value=100.0)
         hueco_fondo = st.number_input("Hueco de fondo (cm)", value=100.0)
-        largo_disponible = salida_escalera 
-        fondo_escalera = hueco_salida
+        largo_principal = salida_escalera 
+        fondo_real = hueco_salida
     else:
         altura_total = st.number_input("Altura Total (cm)", value=240.0)
-        largo_disponible = st.number_input("Fondo (cm)", value=300.0) 
-        fondo_escalera = st.number_input("Hueco (cm)", value=100.0)   
+        largo_principal = st.number_input("Fondo (cm)", value=300.0) 
+        fondo_real = st.number_input("Hueco (cm)", value=100.0)   
     
     st.markdown("---")
     precio_m3_concreto = st.number_input("Precio m3 Concreto (COP)", value=550000)
@@ -56,45 +56,33 @@ with st.sidebar.form("formulario_diseño"):
 ch_ideal = 18.0
 num_peldaños = math.ceil(altura_total / ch_ideal)
 ch_final = altura_total / num_peldaños
+longitud_desarrollo_m = math.sqrt((largo_principal/100)**2 + (altura_total/100)**2)
 
 if tipo_escalera == "Recta":
-    huella_calculada = largo_disponible / (num_peldaños - 1)
-    angulo_rad = math.atan(altura_total / largo_disponible)
-    angulo_deg = math.degrees(angulo_rad)
-    vol_total = ((largo_disponible/100) * (fondo_escalera/100) * 0.05) + \
-                (((huella_calculada/100)*(ch_final/100)/2)*(fondo_escalera/100)*num_peldaños)
+    huella_calculada = largo_principal / (num_peldaños - 1)
+    vol_total = (longitud_desarrollo_m * (fondo_real/100) * 0.05) + \
+                (((huella_calculada/100)*(ch_final/100)/2)*(fondo_real/100)*num_peldaños)
     dificultad_base = 0.9
-
 elif tipo_escalera == "En L con abanico":
     pasos_rectos = num_peldaños - 3
-    huella_calculada = (salida_escalera - hueco_fondo) / (pasos_rectos) if pasos_rectos > 0 else 25
-    angulo_rad = math.atan(ch_final / huella_calculada)
-    angulo_deg = math.degrees(angulo_rad)
-    vol_total = ((salida_escalera/100 * hueco_salida/100) + (llegada_fondo/100 * hueco_fondo/100)) * 0.12
+    huella_calculada = (largo_principal - 100) / pasos_rectos if pasos_rectos > 0 else 25
+    vol_total = ((largo_principal/100 * fondo_real/100) + (1.0 * 1.0)) * 0.12
     dificultad_base = 1.4
-
+    longitud_desarrollo_m *= 1.2
 else: 
     huella_calculada = 28.0
-    angulo_deg = 35.0
-    vol_total = (altura_total/100 * fondo_escalera/100 * 0.15)
+    vol_total = (altura_total/100 * fondo_real/100 * 0.15)
     dificultad_base = 1.5
 
-recargo = 1.10 if "+" in estilo_construccion else 1.0
-costo_mat = vol_total * precio_m3_concreto
-costo_total = (costo_mat + (costo_mat * dificultad_base)) * recargo
-precio_venta = costo_total * (1 + margen_utilidad)
+# --- CÁLCULO DE MATERIALES (MEZCLA Y ACERO) ---
+vol_con_desperdicio = vol_total * 1.05
+cemento_bultos = math.ceil(vol_con_desperdicio * 7.0)
+arena_m3 = vol_con_desperdicio * 0.52
+triturado_m3 = vol_con_desperdicio * 0.75
 
-# --- INTERFAZ DE RESULTADOS (ORDEN MODIFICADO) ---
-if pestana == "Calculadora":
-    st.title(f"🚀 Resultado de Cálculo: {tipo_escalera}")
-    
-    # 1. Cantidad de pasos (Métrica principal destacada)
-    st.subheader("🪜 Especificaciones de Construcción")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Cantidad de Pasos", int(num_peldaños))
-    m2.metric("Tamaño de la Huella", f"{huella_calculada:.2f} cm")
-    m3.metric("Altura Final de cada Paso", f"{ch_final:.2f} cm")
-
-    st.markdown("---")
-
-    # 2. Valor Total
+num_varillas_long = math.ceil((fondo_real / 15) + 1)
+metros_3_8 = num_varillas_long * longitud_desarrollo_m * 1.10
+varillas_6m = math.ceil(metros_3_8 / 6)
+num_grafiles_trans = math.ceil((longitud_desarrollo_m * 100 / 20) + 1)
+grafiles_6m = math.ceil((num_grafiles_trans * (fondo_real / 100) * 1.10) / 6)
+alambre_kg = math
