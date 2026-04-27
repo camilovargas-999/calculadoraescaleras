@@ -80,7 +80,76 @@ else:
 
 angulo_deg = math.degrees(angulo_rad)
 
-# Determinación de Ángulo Óptimo
+# Determinación de Ángulo Óptimo (CORREGIDO)
 if 30 <= angulo_deg <= 37:
     estado_angulo = "✅ Óptimo"
-elif 26 <= angulo_deg < 30 or 37 < angulo_deg
+elif (26 <= angulo_deg < 30) or (37 < angulo_deg <= 42):
+    estado_angulo = "⚠️ Aceptable"
+else:
+    estado_angulo = "🚨 Crítico"
+
+# Materiales y Finanzas
+vol_con_desperdicio = vol_total * 1.05
+cemento_bultos = math.ceil(vol_con_desperdicio * 7.0)
+arena_m3 = vol_con_desperdicio * 0.52
+triturado_m3 = vol_con_desperdicio * 0.75
+num_varillas_long = math.ceil((fondo_calc / 15) + 1)
+metros_3_8 = num_varillas_long * longitud_desarrollo_m * 1.10
+varillas_6m = math.ceil(metros_3_8 / 6)
+num_grafiles_trans = math.ceil((longitud_desarrollo_m * 100 / 20) + 1)
+grafiles_6m = math.ceil((num_grafiles_trans * (fondo_calc / 100) * 1.10) / 6)
+alambre_kg = math.ceil((num_varillas_long * num_grafiles_trans) * 0.02)
+
+recargo = 1.10 if "+" in estilo_construccion else 1.0
+costo_mat = vol_total * precio_m3_concreto
+costo_total = (costo_mat + (costo_mat * dificultad_base)) * recargo
+precio_venta = costo_total * (1 + margen_utilidad)
+
+# --- INTERFAZ DE RESULTADOS ---
+if pestana == "Calculadora":
+    st.title(f"🚀 Cotización: {tipo_escalera}")
+    
+    st.markdown("### 🪜 Datos de Construcción")
+    res_col1, res_col2, res_col3 = st.columns(3)
+    res_col1.metric("Cantidad de Pasos", int(num_peldaños))
+    res_col2.metric("Tamaño de la Huella", f"{huella_calculada:.2f} cm")
+    res_col3.metric("Altura Final de Paso", f"{ch_final:.2f} cm")
+
+    st.markdown("### 💰 Resultado de la Operación")
+    val_col1, val_col2, val_col3 = st.columns(3)
+    val_col1.metric("VALOR TOTAL VENTA", formato_cop(precio_venta))
+    val_col2.metric("Inclinación", f"{angulo_deg:.1f}°", delta=estado_angulo, delta_color="normal")
+    val_col3.metric("Giro / Orientación", orientacion)
+
+    st.markdown("---")
+
+    # Alertas de Huella para Recta
+    if tipo_escalera == "Recta" and huella_calculada < 24:
+        st.error(f"🚨 ERROR TÉCNICO: La huella de {huella_calculada:.1f}cm es menor al mínimo de 24cm configurado.")
+    elif huella_calculada < 23:
+        st.error(f"❌ ALERTA NSR-10: Huella de {huella_calculada:.1f}cm es ilegal en Colombia.")
+
+    st.subheader("📦 Desglose de Materiales")
+    mat_col1, mat_col2 = st.columns(2)
+    with mat_col1:
+        st.info("**Mezcla (3000 PSI)**")
+        st.write(f"🔹 Cemento: {cemento_bultos} Bultos")
+        st.write(f"🔹 Arena: {arena_m3:.2f} m³")
+        st.write(f"🔹 Triturado: {triturado_m3:.2f} m³")
+    
+    with mat_col2:
+        st.warning("**Refuerzo de Acero**")
+        st.write(f"🔸 Varilla 3/8: {varillas_6m} unids (6m)")
+        st.write(f"🔸 Grafil 1/4: {grafiles_6m} unids (6m)")
+        st.write(f"🔸 Alambre Negro: {alambre_kg} kg")
+
+    st.markdown("---")
+    
+    with st.expander("💾 Guardar en el Historial"):
+        proy = st.text_input("Nombre de la Obra")
+        if st.button("CONFIRMAR"):
+            st.session_state.historial.append({"Obra": proy, "Tipo": tipo_escalera, "Venta": precio_venta})
+            st.success("Guardado")
+else:
+    st.title("📊 Historial")
+    st.table(pd.DataFrame(st.session_state.historial))
