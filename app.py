@@ -2,7 +2,7 @@ import streamlit as st
 import math
 import pandas as pd
 
-st.set_page_config(page_title="Escaleras Pro V2.8 - Colombia", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="Escaleras Pro V2.9 - Colombia", page_icon="🏗️", layout="wide")
 
 def formato_cop(valor):
     return "COP {:,.0f}".format(valor).replace(",", ".")
@@ -22,7 +22,6 @@ with st.sidebar.form("formulario_diseño"):
         ["Recta", "En L con abanico", "En U con abanico", "Caracol"]
     )
 
-    # Orientación (Solo si no es recta)
     orientacion = "N/A"
     if tipo_escalera != "Recta":
         orientacion = st.radio("Orientación (Giro)", ["Derecha 👉", "Izquierda 👈"])
@@ -34,20 +33,18 @@ with st.sidebar.form("formulario_diseño"):
     
     st.markdown("---")
     
-    # Parámetros según el tipo de escalera
     if tipo_escalera == "En L con abanico":
         altura_total = st.number_input("Altura Total (cm)", value=240.0)
         salida_escalera = st.number_input("Salida de la escalera (cm)", value=300.0)
         hueco_salida = st.number_input("Hueco de salida (cm)", value=100.0)
         llegada_fondo = st.number_input("Llegada (Fondo) (cm)", value=100.0)
         hueco_fondo = st.number_input("Hueco de fondo (cm)", value=100.0)
-        # Para el cálculo general usamos la salida como largo principal
         largo_disponible = salida_escalera 
         fondo_escalera = hueco_salida
     else:
         altura_total = st.number_input("Altura Total (cm)", value=240.0)
-        largo_disponible = st.number_input("Fondo (cm)", value=300.0) # El fondo que pediste como 300
-        fondo_escalera = st.number_input("Hueco (cm)", value=100.0)   # El hueco que pediste como 100
+        largo_disponible = st.number_input("Fondo (cm)", value=300.0) 
+        fondo_escalera = st.number_input("Hueco (cm)", value=100.0)   
     
     st.markdown("---")
     precio_m3_concreto = st.number_input("Precio m3 Concreto (COP)", value=550000)
@@ -56,15 +53,12 @@ with st.sidebar.form("formulario_diseño"):
     submit_button = st.form_submit_button(label="🔄 CALCULAR Y ACTUALIZAR")
 
 # --- LÓGICA DE CÁLCULO ---
-# 1. Cálculos de pasos básicos (Ley de Blondel)
 ch_ideal = 18.0
 num_peldaños = math.ceil(altura_total / ch_ideal)
 ch_final = altura_total / num_peldaños
 
-# 2. Cálculos específicos por tipo
 if tipo_escalera == "Recta":
     huella_calculada = largo_disponible / (num_peldaños - 1)
-    # Ángulo: tan(ang) = Opuesto/Adyacente -> ang = atan(Alt/Largo)
     angulo_rad = math.atan(altura_total / largo_disponible)
     angulo_deg = math.degrees(angulo_rad)
     vol_total = ((largo_disponible/100) * (fondo_escalera/100) * 0.05) + \
@@ -72,69 +66,35 @@ if tipo_escalera == "Recta":
     dificultad_base = 0.9
 
 elif tipo_escalera == "En L con abanico":
-    # 3 peldaños en el abanico (la esquina)
     pasos_rectos = num_peldaños - 3
     huella_calculada = (salida_escalera - hueco_fondo) / (pasos_rectos) if pasos_rectos > 0 else 25
     angulo_rad = math.atan(ch_final / huella_calculada)
     angulo_deg = math.degrees(angulo_rad)
-    # Volumen estimado para la L
     vol_total = ((salida_escalera/100 * hueco_salida/100) + (llegada_fondo/100 * hueco_fondo/100)) * 0.12
     dificultad_base = 1.4
 
-else: # U y Caracol (Simplificado para esta versión)
+else: 
     huella_calculada = 28.0
     angulo_deg = 35.0
     vol_total = (altura_total/100 * fondo_escalera/100 * 0.15)
     dificultad_base = 1.5
 
-# --- FINANZAS ---
 recargo = 1.10 if "+" in estilo_construccion else 1.0
 costo_mat = vol_total * precio_m3_concreto
 costo_total = (costo_mat + (costo_mat * dificultad_base)) * recargo
 precio_venta = costo_total * (1 + margen_utilidad)
 
-# --- INTERFAZ ---
+# --- INTERFAZ DE RESULTADOS (ORDEN MODIFICADO) ---
 if pestana == "Calculadora":
-    st.title(f"🚀 Cotizador: {tipo_escalera}")
-    if orientacion != "N/A":
-        st.subheader(f"Orientación: {orientacion}")
-
-    # Resultados Principales
-    res1, res2, res3 = st.columns(3)
-    res1.metric("PRECIO VENTA", formato_cop(precio_venta))
-    res2.metric("N° PASOS", int(num_peldaños))
-    res3.metric("ÁNGULO", f"{angulo_deg:.1f}°")
-
-    st.markdown("---")
-
-    # Ficha Técnica Detallada
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("📋 Medidas del Peldaño")
-        st.write(f"**Cantidad de pasos:** {int(num_peldaños)}")
-        st.write(f"**Medida de la huella:** {huella_calculada:.2f} cm")
-        st.write(f"**Altura de los pasos (Contrahuella):** {ch_final:.2f} cm")
-        
-    with col2:
-        st.subheader("📐 Geometría y Norma")
-        st.write(f"**Ángulo de inclinación:** {angulo_deg:.1f}°")
-        if angulo_deg > 42:
-            st.warning("⚠️ Escalera muy empinada (tipo escala).")
-        elif angulo_deg < 26:
-            st.info("ℹ️ Escalera muy tendida (ocupa mucho espacio).")
-        
-        if huella_calculada < 23:
-            st.error("❌ Huella fuera de norma (Menor a 23cm)")
-        else:
-            st.success("✅ Huella cumple norma NSR-10")
+    st.title(f"🚀 Resultado de Cálculo: {tipo_escalera}")
+    
+    # 1. Cantidad de pasos (Métrica principal destacada)
+    st.subheader("🪜 Especificaciones de Construcción")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Cantidad de Pasos", int(num_peldaños))
+    m2.metric("Tamaño de la Huella", f"{huella_calculada:.2f} cm")
+    m3.metric("Altura Final de cada Paso", f"{ch_final:.2f} cm")
 
     st.markdown("---")
-    # Botón para guardar permanece igual
-    cliente = st.text_input("Nombre del Proyecto")
-    if st.button("💾 GUARDAR"):
-        st.session_state.historial.append({"Cliente": cliente, "Diseño": tipo_escalera, "Venta": precio_venta, "Angulo": angulo_deg})
-        st.toast("Guardado")
 
-else:
-    st.title("📊 Historial")
-    st.table(pd.DataFrame(st.session_state.historial))
+    # 2. Valor Total
