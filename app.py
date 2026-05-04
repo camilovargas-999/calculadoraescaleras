@@ -16,7 +16,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus import Image as RLImage
 
-st.set_page_config(page_title="Escaleras Pro V8.0", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="Escaleras Pro V9.0", page_icon="🏗️", layout="wide")
 
 st.markdown("""
 <style>
@@ -37,7 +37,7 @@ if 'precios' not in st.session_state:
         'cant_pena': 2, 'acarreo': 100000,
         'grafil_cant': 2, 'alambre_kg': 1,
         'gastos_indirectos_pct': 5.0,
-        'ganancia_pct': 50,
+        'ganancia_pct': 30,
         # bloques estructurales
         'bloque_precio': 5200, 'bloque_cant': 0,
         # datos empresa
@@ -56,39 +56,60 @@ def fmt(valor):
 
 def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
     """
-    Lógica de cálculo.
-    Base: escalera de 300 cm → 12 pasos de 25 cm.
-    La huella mínima es 23 cm; si no alcanza, se reduce el número
-    de pasos hasta que cada uno tenga al menos 23 cm.
-    Prima el ancho de los pasos sobre la altura.
+    Lógica de cálculo v9.
+    - Pasos base = round(fondo / 25); contrahuella usa pasos+1 (cambio #4)
+    - Huella mínima 23 cm
+    - Volumen recta: losa horizontal + losa vertical (cambio #7)
+    - Varillas 3/8: una por paso, longitud = ancho + 12 cm (cambio #6)
+    - Grafil 1/4: varillas_38 × 4 (cambio #8)
     """
-    # Número de pasos base proporcional a 3 m → 12 pasos
-    pasos = max(1, round(fondo_cm / 25))   # prima huella de 25 cm
+    # Número de pasos para la huella (fondo)
+    pasos = max(1, round(fondo_cm / 25))
     huella = fondo_cm / pasos
 
-    # Ajuste automático: si la huella queda < 23 cm, reducir pasos
+    # Ajuste: si huella < 23 cm, reducir pasos
     while huella < 23 and pasos > 1:
         pasos -= 1
         huella = fondo_cm / pasos
 
-    contrahuella = alt_cm / pasos
-    alt    = alt_cm  / 100
-    fondo  = fondo_cm / 100
-    anc    = anc_cm  / 100
+    # Cambio #4: contrahuella se divide entre pasos+1
+    contrahuella = alt_cm / (pasos + 1)
+
+    alt   = alt_cm  / 100
+    fondo = fondo_cm / 100
+    anc   = anc_cm  / 100
 
     long_inclinada = math.sqrt(fondo**2 + alt**2)
-    espesor = 0.11
-    vol_base = long_inclinada * anc * espesor
-    factores = {"Recta": 1.0, "En L con abanico": 1.35,
-                "En U con abanico": 1.70, "Caracol": 1.50}
-    vol = vol_base * factores.get(tipo, 1.0)
-    bls_cemento  = math.ceil(vol * 7.5)
-    mix_m3       = round(vol * 1.1, 2)
-    num_long     = math.ceil(anc / 0.15) + 1
-    barras_long  = math.ceil((num_long * long_inclinada * 1.1) / 6)
-    num_trans    = math.ceil(long_inclinada / 0.20)
-    barras_trans = math.ceil((num_trans * anc * 1.1) / 6)
-    v38 = barras_long + barras_trans
+
+    # ── Volumen ──
+    espesor = 0.055  # 5.5 cm
+
+    if tipo == "Recta":
+        # Cambio #7: vol_horizontal + vol_vertical
+        vol_horizontal = fondo * anc * espesor
+        vol_vertical   = alt   * anc * espesor
+        vol = vol_horizontal + vol_vertical
+    else:
+        # Otros tipos: losa inclinada con factores
+        vol_base = long_inclinada * anc * espesor
+        factores = {"En L con abanico": 1.35,
+                    "En U con abanico": 1.70, "Caracol": 1.50}
+        vol = vol_base * factores.get(tipo, 1.0)
+
+    bls_cemento = math.ceil(vol * 7.5)
+    mix_m3      = round(vol * 1.1, 2)
+
+    # ── Varillas 3/8 — Cambio #6 ──
+    # Una varilla por paso; longitud = ancho + 12 cm
+    long_varilla_cm = anc_cm + 12          # ej: 100+12 = 112 cm
+    long_varilla_m  = long_varilla_cm / 100
+    # Cuántas varillas de 6 m se necesitan para cubrir todos los pasos
+    metros_totales = pasos * long_varilla_m
+    v38_barras_reales = metros_totales / 6  # puede ser decimal
+    v38_barras        = math.ceil(v38_barras_reales)
+
+    # ── Grafil 1/4 — Cambio #8 ──
+    grafil_cant = v38_barras * 4
 
     return {
         'pasos': pasos,
@@ -98,7 +119,10 @@ def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
         'vol': round(vol, 3),
         'bls_cemento': bls_cemento,
         'mix_m3': mix_m3,
-        'v38_barras': v38,
+        'v38_barras': v38_barras,
+        'v38_barras_reales': round(v38_barras_reales, 2),
+        'long_varilla_cm': long_varilla_cm,
+        'grafil_cant': grafil_cant,
         'huella_ok': huella >= 23,
     }
 
@@ -106,7 +130,7 @@ def calcular_costos(res, p):
     costo_cemento  = res['bls_cemento']  * p['cemento']
     costo_mixto    = res['mix_m3']       * p['mixto']
     costo_v38      = res['v38_barras']   * p['varilla_38']
-    costo_grafil   = p['grafil_cant']    * p['grafil_14']
+    costo_grafil   = res['grafil_cant']  * p['grafil_14']   # grafil viene del cálculo
     costo_alambre  = p['alambre_kg']     * p['alambre']
     costo_pena     = p['cant_pena']      * p['bulto_pena']
     costo_bloque   = p['bloque_cant']    * p['bloque_precio']
@@ -350,7 +374,7 @@ def fig_to_bytes(fig):
     return buf.read()
 
 # ── GENERADOR DE PDF ─────────────────────────────────────────
-def generar_pdf(cliente, telefono, direccion, tipo, res, costos, p, orientacion):
+def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orientacion):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter,
                             leftMargin=2*cm, rightMargin=2*cm,
@@ -477,10 +501,20 @@ def generar_pdf(cliente, telefono, direccion, tipo, res, costos, p, orientacion)
                  fontName='Helvetica-Bold', textColor=azul, spaceAfter=6)))
     story.append(Paragraph(fmt(costos['precio_venta']), st_precio))
     story.append(Spacer(1, 6))
+
+    # Cambio #2: Notas / Aclaraciones
+    story.append(Paragraph("Notas y aclaraciones", ParagraphStyle('h2', fontSize=11,
+                 fontName='Helvetica-Bold', textColor=azul, spaceAfter=4)))
+    story.append(Paragraph(notas, st_normal))
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=gris, spaceAfter=6))
+
+    # Cambio #1: validez 15 días
     story.append(Paragraph(
-        "* Este presupuesto tiene validez de 15 días calendario a partir de la fecha de emisión.",
-        st_center))
-    story.append(Spacer(1, 20))
+        "⚠️ Esta cotización tiene validez de <b>15 días calendario</b> a partir de la fecha de emisión.",
+        ParagraphStyle('validez', parent=styles['Normal'], fontSize=9,
+                       textColor=colors.HexColor("#B71C1C"), spaceAfter=4)))
+    story.append(Spacer(1, 10))
     story.append(HRFlowable(width="100%", thickness=0.5, color=gris, spaceAfter=4))
     story.append(Paragraph(f"Generado por Escaleras Pro V8.0  —  {datetime.now().strftime('%d/%m/%Y %H:%M')}",
                            st_center))
@@ -492,9 +526,10 @@ def generar_pdf(cliente, telefono, direccion, tipo, res, costos, p, orientacion)
 # ══════════════════════════════════════════════════════════════
 #  MENÚ PRINCIPAL
 # ══════════════════════════════════════════════════════════════
-st.sidebar.title("🏗️ ESCALERAS PRO V8.0")
+st.sidebar.title("🏗️ ESCALERAS PRO V9.0")
 pestana = st.sidebar.radio("Sección:", [
     "🚀 Calculadora", "📐 Dibujo Técnico",
+    "📋 Catálogo de Escaleras",
     "💰 Configuración de Costos", "📊 Historial"
 ])
 
@@ -514,6 +549,16 @@ if pestana == "🚀 Calculadora":
         fondo = st.number_input("Fondo / Largo (cm)", value=300.0, min_value=60.0, max_value=800.0)
     with c4:
         anc  = st.number_input("Ancho (cm)", value=100.0, min_value=60.0, max_value=300.0)
+
+    # Cambio #10: cantidad de bloques en dimensiones
+    b1_, b2_ = st.columns([1, 3])
+    with b1_:
+        bloque_cant_calc = st.number_input(
+            "Cantidad de bloques estructurales",
+            value=int(st.session_state.precios.get('bloque_cant', 0)),
+            min_value=0, step=1
+        )
+        st.session_state.precios['bloque_cant'] = bloque_cant_calc
 
     # Orientación solo para escaleras no rectas
     orientacion = st.session_state.precios.get('orientacion', 'Derecha')
@@ -561,27 +606,29 @@ if pestana == "🚀 Calculadora":
         st.write(f"• Volumen concreto: **{res['vol']} m³**")
         if tipo != "Recta":
             st.write(f"• Orientación: **{orientacion}**")
-        ok_contra = 16 <= res['contrahuella'] <= 20
+        ok_contra = 16 <= res['contrahuella'] <= 22
         ok_huella = res['huella'] >= 25
         if ok_contra and ok_huella:
             st.success("✅ Medidas dentro de norma")
         else:
             msgs = []
             if not ok_contra:
-                msgs.append(f"Contrahuella {res['contrahuella']:.0f} cm fuera de 16–20 cm")
+                msgs.append(f"Contrahuella {res['contrahuella']:.0f} cm fuera de 16–22 cm")
             if not ok_huella:
                 msgs.append(f"Huella {res['huella']:.0f} cm < 25 cm recomendado")
             st.warning("⚠️ " + " | ".join(msgs))
 
     with col_b:
         st.markdown("#### 📦 Materiales")
+        st.caption(f"📏 Varilla 3/8\": {res['pasos']} varillas de {res['long_varilla_cm']} cm "
+                   f"= {res['v38_barras_reales']} barras de 6m → se compran {res['v38_barras']}")
         st.dataframe(pd.DataFrame({
             "Material": ["Cemento (bultos)", "Mixto (m³)",
                          'Varilla 3/8" (barras 6m)',
                          'Grafil 1/4" (barras)', "Alambre (kg)",
                          "Arena de Peña (bultos)", "Bloques estructurales"],
             "Cant.": [res['bls_cemento'], res['mix_m3'], res['v38_barras'],
-                      p['grafil_cant'], p['alambre_kg'], p['cant_pena'], p['bloque_cant']],
+                      res['grafil_cant'], p['alambre_kg'], p['cant_pena'], p['bloque_cant']],
             "Costo": [fmt(costos['costo_cemento']), fmt(costos['costo_mixto']),
                       fmt(costos['costo_v38']),     fmt(costos['costo_grafil']),
                       fmt(costos['costo_alambre']), fmt(costos['costo_pena']),
@@ -626,14 +673,23 @@ if pestana == "🚀 Calculadora":
             cli_tel    = st.text_input("Teléfono")
         with fc2:
             cli_dir    = st.text_input("Dirección / Nombre del conjunto")
+        # Cambio #2: campo de notas obligatorio
+        cli_notas = st.text_area(
+            "📝 Notas / Aclaraciones (obligatorio)",
+            placeholder="Ej: Incluye instalación, escalera sin acabados, material puesto en obra, etc.",
+            height=100
+        )
         generar = st.form_submit_button("📄 GENERAR PDF")
 
     if generar:
         if not cli_nombre.strip():
             st.warning("⚠️ Ingresa el nombre del cliente.")
+        elif not cli_notas.strip():
+            st.warning("⚠️ El campo de notas es obligatorio. Por favor agrega una aclaración.")
         else:
             pdf_bytes = generar_pdf(
                 cliente=cli_nombre, telefono=cli_tel, direccion=cli_dir,
+                notas=cli_notas,
                 tipo=tipo, res=res, costos=costos, p=p, orientacion=orientacion
             )
             st.download_button(
@@ -698,6 +754,69 @@ elif pestana == "📐 Dibujo Técnico":
                                mime="image/png")
         finally:
             plt.close(fig_plan)
+
+# ══════════════════════════════════════════════════════════════
+#  CATÁLOGO DE ESCALERAS
+# ══════════════════════════════════════════════════════════════
+elif pestana == "📋 Catálogo de Escaleras":
+    st.title("📋 Catálogo de Escaleras Prefabricadas")
+    st.markdown("Referencia de los tipos de escalera disponibles con sus características principales.")
+    st.markdown("---")
+
+    catalogo = [
+        {
+            "tipo": "Recta",
+            "icono": "📏",
+            "descripcion": "Escalera en línea recta de un solo tramo. Ideal para espacios con fondo suficiente.",
+            "ventajas": ["Fácil de fabricar e instalar", "Menor costo", "Estructura más sencilla"],
+            "dimensiones": "Fondo mínimo recomendado: 240 cm | Ancho mínimo: 80 cm",
+            "usos": "Casas, bodegas, locales comerciales",
+        },
+        {
+            "tipo": "En L con abanico",
+            "icono": "↩️",
+            "descripcion": "Escalera con un giro de 90° usando peldaños en abanico en la esquina.",
+            "ventajas": ["Ocupa menos fondo que la recta", "Giro suave con abanico", "Buena para espacios esquinados"],
+            "dimensiones": "Dos tramos + zona de abanico | Ancho mínimo: 90 cm",
+            "usos": "Casas de dos pisos, apartamentos",
+        },
+        {
+            "tipo": "En U con abanico",
+            "icono": "↪️",
+            "descripcion": "Escalera con dos giros de 90° formando una U, con abanicos en ambas esquinas.",
+            "ventajas": ["Compacta en planta", "Apta para espacios cuadrados", "Elegante apariencia"],
+            "dimensiones": "Tres tramos + dos abanicos | Ancho mínimo: 90 cm",
+            "usos": "Edificios, casas con poco fondo disponible",
+        },
+        {
+            "tipo": "Caracol",
+            "icono": "🌀",
+            "descripcion": "Escalera circular con núcleo central. Peldaños en cuña alrededor del eje.",
+            "ventajas": ["Mínimo espacio en planta", "Diseño arquitectónico llamativo", "Ideal para espacios reducidos"],
+            "dimensiones": "Diámetro mínimo: 120 cm | El ancho del peldaño define el diámetro",
+            "usos": "Acceso a terrazas, mezzanines, espacios de diseño",
+        },
+    ]
+
+    for item in catalogo:
+        with st.expander(f"{item['icono']} **{item['tipo']}**", expanded=True):
+            ca, cb = st.columns([2, 1])
+            with ca:
+                st.markdown(f"**Descripción:** {item['descripcion']}")
+                st.markdown(f"**📐 Dimensiones:** {item['dimensiones']}")
+                st.markdown(f"**🏠 Usos típicos:** {item['usos']}")
+                st.markdown("**✅ Ventajas:**")
+                for v in item['ventajas']:
+                    st.markdown(f"  - {v}")
+            with cb:
+                # Botón para ir directo a la calculadora con ese tipo
+                if st.button(f"🚀 Cotizar {item['tipo']}", key=f"cat_{item['tipo']}"):
+                    st.session_state['ultimo_tipo'] = item['tipo']
+                    st.info(f"Ve a 🚀 Calculadora y selecciona **{item['tipo']}**")
+        st.markdown("")
+
+    st.markdown("---")
+    st.info("💡 Selecciona un tipo y haz clic en **Cotizar** para ir directamente a la calculadora con ese diseño preseleccionado.")
 
 # ══════════════════════════════════════════════════════════════
 #  CONFIGURACIÓN DE COSTOS
