@@ -54,25 +54,148 @@ def fmt(valor):
     """Formato COP sin decimales ni comas: COP 1.234.567"""
     return "COP {:,.0f}".format(int(round(valor))).replace(",", ".")
 
-def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
+def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm,
+                      # Parámetros exclusivos para En U con abanico
+                      u_salida_cm=None, u_hueco_salida_cm=None,
+                      u_fondo_cm=None,  u_hueco_fondo_cm=None,
+                      u_llegada_cm=None, u_hueco_llegada_cm=None):
     """
-    Lógica de cálculo v9.
-    - Pasos base = round(fondo / 25); contrahuella usa pasos+1 (cambio #4)
-    - Huella mínima 23 cm
-    - Volumen recta: losa horizontal + losa vertical (cambio #7)
-    - Varillas 3/8: una por paso, longitud = ancho + 12 cm (cambio #6)
-    - Grafil 1/4: varillas_38 × 4 (cambio #8)
+    Lógica de cálculo v10.
+    - Recta / En L / Caracol: mismo método anterior.
+    - En U con abanico: método real por tramos.
+        · Salida neta  = salida - hueco_fondo  → pasos_salida  = floor(neta/25)
+        · Llegada neta = llegada - hueco_fondo → pasos_llegada = floor(neta/25)
+        · Perímetro giro = hueco_fondo + fondo + hueco_fondo
+          Buscar divisor que dé huella_giro entre 35-70 cm
+          y contrahuella (alt/(total+1)) entre 16-22 cm
+        · Total pasos = pasos_salida + pasos_giro + pasos_llegada
+        · Contrahuella = alt / (total_pasos + 1)
     """
-    # Número de pasos para la huella (fondo)
+    espesor = 0.055  # 5.5 cm
+
+    # ══════════════════════════════════════════════════════
+    #  EN U CON ABANICO — cálculo por tramos
+    # ══════════════════════════════════════════════════════
+    if tipo == "En U con abanico" and all(v is not None for v in [
+            u_salida_cm, u_hueco_salida_cm, u_fondo_cm,
+            u_hueco_fondo_cm, u_llegada_cm, u_hueco_llegada_cm]):
+
+        hueco_f = u_hueco_fondo_cm
+
+        # ── Tramos rectos ──
+        salida_neta  = u_salida_cm  - hueco_f
+        llegada_neta = u_llegada_cm - hueco_f
+
+        pasos_salida  = max(1, int(salida_neta  / 25))   # floor
+        pasos_llegada = max(1, int(llegada_neta / 25))   # floor
+
+        holgura_salida  = salida_neta  - pasos_salida  * 25
+        holgura_llegada = llegada_neta - pasos_llegada * 25
+
+        # ── Giro (perímetro) ──
+        perimetro_giro = hueco_f + u_fondo_cm + hueco_f  # hueco_salida + fondo + hueco_llegada
+
+        # Buscar la cantidad de pasos en el giro cuya huella quede entre 35-70 cm
+        # y cuya contrahuella total quede entre 16-22 cm
+        mejor = None
+        for n_giro in range(3, 20):
+            huella_giro = perimetro_giro / n_giro
+            if not (35 <= huella_giro <= 70):
+                continue
+            total_pasos = pasos_salida + n_giro + pasos_llegada
+            contrahuella = alt_cm / (total_pasos + 1)
+            if 16 <= contrahuella <= 22:
+                # Guardar el primero que cumpla ambas condiciones
+                # (luego elegimos el que da contrahuella más cercana a 18 cm — valor ideal)
+                if mejor is None:
+                    mejor = (n_giro, huella_giro, total_pasos, contrahuella)
+                else:
+                    # Preferir el que acerca la contrahuella a 18 cm
+                    if abs(contrahuella - 18) < abs(mejor[3] - 18):
+                        mejor = (n_giro, huella_giro, total_pasos, contrahuella)
+
+        if mejor is None:
+            # Si no se encontró combinación válida, devolver resultado con flags de error
+            return {
+                'pasos': 0, 'contrahuella': 0, 'huella': 0,
+                'long_inclinada': 0, 'vol': 0,
+                'bls_cemento': 0, 'mix_m3': 0,
+                'v38_barras': 0, 'v38_barras_reales': 0,
+                'long_varilla_cm': 0, 'grafil_cant': 0,
+                'huella_ok': False, 'u_error': True,
+                'pasos_salida': pasos_salida,
+                'pasos_llegada': pasos_llegada,
+                'perimetro_giro': perimetro_giro,
+            }
+
+        n_giro, huella_giro, total_pasos, contrahuella = mejor
+
+        # ── Longitud inclinada equivalente (diagonal de altura y fondo total) ──
+        alt   = alt_cm / 100
+        fondo_total = (u_salida_cm + u_fondo_cm + u_llegada_cm) / 100
+        anc   = anc_cm / 100
+        long_inclinada = math.sqrt(fondo_total**2 + alt**2)
+
+        # ── Volumen por tramos ──
+        # Tramo salida: losa horizontal + vertical (como escalera recta)
+        long_salida  = (pasos_salida  * 25) / 100
+        long_llegada = (pasos_llegada * 25) / 100
+        long_giro    = (perimetro_giro)     / 100
+
+        vol_salida  = (long_salida  * anc * espesor) + ((alt/2) * anc * espesor)
+        vol_llegada = (long_llegada * anc * espesor) + ((alt/2) * anc * espesor)
+        # Giro: losa inclinada * factor abanico
+        vol_base_giro = long_giro * anc * espesor
+        vol_giro = vol_base_giro * 1.35   # factor por los abanicos en esquinas
+
+        vol = round(vol_salida + vol_llegada + vol_giro, 3)
+
+        bls_cemento = math.ceil(vol * 7.5)
+        mix_m3      = round(vol * 1.1, 2)
+
+        # ── Varillas 3/8 ──
+        long_varilla_cm = anc_cm + 12
+        long_varilla_m  = long_varilla_cm / 100
+        metros_totales  = total_pasos * long_varilla_m
+        v38_barras_reales = metros_totales / 6
+        v38_barras        = math.ceil(v38_barras_reales)
+        grafil_cant       = v38_barras * 4
+
+        huella_recta = 25.0  # huellas de tramos rectos siempre 25 cm
+
+        return {
+            'pasos':             total_pasos,
+            'pasos_salida':      pasos_salida,
+            'pasos_giro':        n_giro,
+            'pasos_llegada':     pasos_llegada,
+            'contrahuella':      round(contrahuella, 1),
+            'huella':            huella_recta,
+            'huella_giro':       round(huella_giro, 1),
+            'holgura_salida':    round(holgura_salida, 1),
+            'holgura_llegada':   round(holgura_llegada, 1),
+            'perimetro_giro':    round(perimetro_giro, 1),
+            'long_inclinada':    round(long_inclinada, 2),
+            'vol':               vol,
+            'bls_cemento':       bls_cemento,
+            'mix_m3':            mix_m3,
+            'v38_barras':        v38_barras,
+            'v38_barras_reales': round(v38_barras_reales, 2),
+            'long_varilla_cm':   long_varilla_cm,
+            'grafil_cant':       grafil_cant,
+            'huella_ok':         True,
+            'u_error':           False,
+        }
+
+    # ══════════════════════════════════════════════════════
+    #  RESTO DE TIPOS — lógica original
+    # ══════════════════════════════════════════════════════
     pasos = max(1, round(fondo_cm / 25))
     huella = fondo_cm / pasos
 
-    # Ajuste: si huella < 23 cm, reducir pasos
     while huella < 23 and pasos > 1:
         pasos -= 1
         huella = fondo_cm / pasos
 
-    # Cambio #4: contrahuella se divide entre pasos+1
     contrahuella = alt_cm / (pasos + 1)
 
     alt   = alt_cm  / 100
@@ -81,49 +204,39 @@ def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
 
     long_inclinada = math.sqrt(fondo**2 + alt**2)
 
-    # ── Volumen ──
-    espesor = 0.055  # 5.5 cm
-
     if tipo == "Recta":
-        # Cambio #7: vol_horizontal + vol_vertical
         vol_horizontal = fondo * anc * espesor
         vol_vertical   = alt   * anc * espesor
         vol = vol_horizontal + vol_vertical
     else:
-        # Otros tipos: losa inclinada con factores
         vol_base = long_inclinada * anc * espesor
-        factores = {"En L con abanico": 1.35,
-                    "En U con abanico": 1.70, "Caracol": 1.50}
+        factores = {"En L con abanico": 1.35, "Caracol": 1.50}
         vol = vol_base * factores.get(tipo, 1.0)
 
     bls_cemento = math.ceil(vol * 7.5)
     mix_m3      = round(vol * 1.1, 2)
 
-    # ── Varillas 3/8 — Cambio #6 ──
-    # Una varilla por paso; longitud = ancho + 12 cm
-    long_varilla_cm = anc_cm + 12          # ej: 100+12 = 112 cm
-    long_varilla_m  = long_varilla_cm / 100
-    # Cuántas varillas de 6 m se necesitan para cubrir todos los pasos
-    metros_totales = pasos * long_varilla_m
-    v38_barras_reales = metros_totales / 6  # puede ser decimal
+    long_varilla_cm   = anc_cm + 12
+    long_varilla_m    = long_varilla_cm / 100
+    metros_totales    = pasos * long_varilla_m
+    v38_barras_reales = metros_totales / 6
     v38_barras        = math.ceil(v38_barras_reales)
-
-    # ── Grafil 1/4 — Cambio #8 ──
-    grafil_cant = v38_barras * 4
+    grafil_cant       = v38_barras * 4
 
     return {
-        'pasos': pasos,
-        'contrahuella': round(contrahuella, 1),
-        'huella': round(huella, 1),
-        'long_inclinada': round(long_inclinada, 2),
-        'vol': round(vol, 3),
-        'bls_cemento': bls_cemento,
-        'mix_m3': mix_m3,
-        'v38_barras': v38_barras,
+        'pasos':             pasos,
+        'contrahuella':      round(contrahuella, 1),
+        'huella':            round(huella, 1),
+        'long_inclinada':    round(long_inclinada, 2),
+        'vol':               round(vol, 3),
+        'bls_cemento':       bls_cemento,
+        'mix_m3':            mix_m3,
+        'v38_barras':        v38_barras,
         'v38_barras_reales': round(v38_barras_reales, 2),
-        'long_varilla_cm': long_varilla_cm,
-        'grafil_cant': grafil_cant,
-        'huella_ok': huella >= 23,
+        'long_varilla_cm':   long_varilla_cm,
+        'grafil_cant':       grafil_cant,
+        'huella_ok':         huella >= 23,
+        'u_error':           False,
     }
 
 def calcular_costos(res, p):
@@ -550,7 +663,29 @@ if pestana == "🚀 Calculadora":
     with c4:
         anc  = st.number_input("Ancho (cm)", value=100.0, min_value=60.0, max_value=300.0)
 
-    # Cambio #10: cantidad de bloques en dimensiones
+    # ── Campos adicionales para En U con abanico ──────────────
+    u_salida_cm = u_hueco_salida_cm = None
+    u_fondo_cm  = u_hueco_fondo_cm  = None
+    u_llegada_cm = u_hueco_llegada_cm = None
+
+    if tipo == "En U con abanico":
+        st.markdown("#### 📏 Medidas reales de la escalera en U")
+        st.caption("Ingresa las tres zonas con sus respectivos huecos.")
+        ua1, ua2, ua3 = st.columns(3)
+        with ua1:
+            st.markdown("**Salida**")
+            u_salida_cm       = st.number_input("Medida salida (cm)",       value=185.0, min_value=50.0, max_value=800.0, key="u_sal")
+            u_hueco_salida_cm = st.number_input("Hueco salida (cm)",        value=80.0,  min_value=20.0, max_value=300.0, key="u_hsal")
+        with ua2:
+            st.markdown("**Fondo (giro)**")
+            u_fondo_cm        = st.number_input("Medida fondo (cm)",        value=172.0, min_value=50.0, max_value=800.0, key="u_fon")
+            u_hueco_fondo_cm  = st.number_input("Hueco fondo (cm)",         value=80.0,  min_value=20.0, max_value=300.0, key="u_hfon")
+        with ua3:
+            st.markdown("**Llegada**")
+            u_llegada_cm      = st.number_input("Medida llegada (cm)",      value=155.0, min_value=50.0, max_value=800.0, key="u_lle")
+            u_hueco_llegada_cm= st.number_input("Hueco llegada (cm)",       value=80.0,  min_value=20.0, max_value=300.0, key="u_hlle")
+
+    # Cantidad de bloques
     b1_, b2_ = st.columns([1, 3])
     with b1_:
         bloque_cant_calc = st.number_input(
@@ -575,16 +710,31 @@ if pestana == "🚀 Calculadora":
     st.session_state['ultimo_anc']   = anc
 
     st.markdown("---")
-    res = calcular_escalera(tipo, alt, fondo, anc)
+    res = calcular_escalera(tipo, alt, fondo, anc,
+                            u_salida_cm, u_hueco_salida_cm,
+                            u_fondo_cm,  u_hueco_fondo_cm,
+                            u_llegada_cm, u_hueco_llegada_cm)
     p   = st.session_state.precios
 
-    # Advertencia / error si huella < 23 cm después del ajuste
+    # Error si no se encontró combinación válida para En U
+    if res.get('u_error'):
+        st.error(
+            f"⛔ No se encontró una combinación válida de pasos para estas medidas.\n\n"
+            f"Con salida neta **{u_salida_cm - u_hueco_fondo_cm:.0f} cm** → {res['pasos_salida']} pasos rectos, "
+            f"llegada neta **{u_llegada_cm - u_hueco_fondo_cm:.0f} cm** → {res['pasos_llegada']} pasos rectos, "
+            f"perímetro giro **{res['perimetro_giro']:.0f} cm**, "
+            f"ningún divisor entre 3 y 19 cumple huella 35–70 cm y contrahuella 16–22 cm. "
+            f"Revisa las medidas ingresadas."
+        )
+        st.stop()
+
+    # Advertencia / error si huella < 23 cm (tipos no-U)
     if not res['huella_ok']:
         st.error(f"⛔ Con estas dimensiones la huella mínima posible es {res['huella']:.0f} cm "
                  f"(mínimo requerido: 23 cm). Por favor aumenta el fondo de la escalera.")
         st.stop()
 
-    if res['huella'] < 25:
+    if tipo != "En U con abanico" and res['huella'] < 25:
         st.warning(f"⚠️ La huella ajustada es {res['huella']:.0f} cm. "
                    f"Se recomienda mínimo 25 cm para mayor comodidad.")
 
@@ -599,23 +749,36 @@ if pestana == "🚀 Calculadora":
 
     with col_a:
         st.markdown("#### 📐 Datos Técnicos")
-        st.write(f"• Escalones: **{res['pasos']}**")
-        st.write(f"• Contrahuella: **{res['contrahuella']:.0f} cm**")
-        st.write(f"• Huella: **{res['huella']:.0f} cm**")
+        if tipo == "En U con abanico":
+            st.write(f"• Pasos salida:   **{res['pasos_salida']}** (holgura {res['holgura_salida']:.1f} cm)")
+            st.write(f"• Pasos giro:     **{res['pasos_giro']}** (huella giro {res['huella_giro']:.1f} cm)")
+            st.write(f"• Pasos llegada:  **{res['pasos_llegada']}** (holgura {res['holgura_llegada']:.1f} cm)")
+            st.write(f"• **Total escalones: {res['pasos']}**")
+            st.write(f"• Contrahuella: **{res['contrahuella']:.1f} cm**")
+            st.write(f"• Huella recta: **{res['huella']:.0f} cm** · Huella giro: **{res['huella_giro']:.1f} cm**")
+            st.write(f"• Perímetro giro: **{res['perimetro_giro']:.0f} cm**")
+            st.write(f"• Orientación: **{orientacion}**")
+        else:
+            st.write(f"• Escalones: **{res['pasos']}**")
+            st.write(f"• Contrahuella: **{res['contrahuella']:.0f} cm**")
+            st.write(f"• Huella: **{res['huella']:.0f} cm**")
+            if tipo != "Recta":
+                st.write(f"• Orientación: **{orientacion}**")
         st.write(f"• Long. inclinada: **{res['long_inclinada']} m**")
         st.write(f"• Volumen concreto: **{res['vol']} m³**")
-        if tipo != "Recta":
-            st.write(f"• Orientación: **{orientacion}**")
         ok_contra = 16 <= res['contrahuella'] <= 22
-        ok_huella = res['huella'] >= 25
+        ok_huella = (res['huella'] >= 25) if tipo != "En U con abanico" else (res['huella_giro'] >= 35)
         if ok_contra and ok_huella:
             st.success("✅ Medidas dentro de norma")
         else:
             msgs = []
             if not ok_contra:
-                msgs.append(f"Contrahuella {res['contrahuella']:.0f} cm fuera de 16–22 cm")
+                msgs.append(f"Contrahuella {res['contrahuella']:.1f} cm fuera de 16–22 cm")
             if not ok_huella:
-                msgs.append(f"Huella {res['huella']:.0f} cm < 25 cm recomendado")
+                if tipo == "En U con abanico":
+                    msgs.append(f"Huella giro {res['huella_giro']:.1f} cm fuera de 35–70 cm")
+                else:
+                    msgs.append(f"Huella {res['huella']:.0f} cm < 25 cm recomendado")
             st.warning("⚠️ " + " | ".join(msgs))
 
     with col_b:
