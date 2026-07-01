@@ -19,7 +19,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus import Image as RLImage
 
-APP_VERSION = "V9.0"
+APP_VERSION = "V10.0"
 
 st.set_page_config(page_title=f"Escaleras Pro {APP_VERSION}", page_icon="🏗️", layout="wide")
 
@@ -628,19 +628,47 @@ def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orien
     return buf.read()
 
 # ══════════════════════════════════════════════════════════════
-#  MENÚ PRINCIPAL
+#  MENÚ PRINCIPAL / NAVEGACIÓN
 # ══════════════════════════════════════════════════════════════
-st.sidebar.title(f"🏗️ ESCALERAS PRO {APP_VERSION}")
-pestana = st.sidebar.radio("Sección:", [
-    "🚀 Calculadora", "📐 Dibujo Técnico",
-    "📋 Catálogo de Escaleras",
-    "💰 Configuración de Costos", "📊 Historial"
-])
+PAGINAS = {
+    "🚀 Calculadora": "calculadora",
+    "📐 Dibujo Técnico": "dibujo",
+    "💰 Configuración de Costos": "config",
+    "📊 Historial": "historial",
+}
+
+if 'page' not in st.session_state:
+    st.session_state['page'] = 'inicio'
+
+def _ir_a_inicio():
+    st.session_state['page'] = 'inicio'
+
+# ── PANTALLA DE INICIO ──────────────────────────────────────
+if st.session_state['page'] == 'inicio':
+    st.title(f"🏗️ ESCALERAS PRO {APP_VERSION}")
+    st.markdown("Selecciona una sección para comenzar:")
+
+    seleccion = st.selectbox(
+        "Sección:",
+        ["Selecciona una opción..."] + list(PAGINAS.keys()),
+    )
+
+    if seleccion != "Selecciona una opción...":
+        st.session_state['page'] = PAGINAS[seleccion]
+        st.rerun()
+
+    st.stop()
+
+# ── BOTÓN DE REGRESO AL INICIO (visible en todas las pantallas) ──
+st.button("🏠 Inicio", on_click=_ir_a_inicio)
+st.markdown("---")
+
+pestana_actual = st.session_state['page']
 
 # ══════════════════════════════════════════════════════════════
 #  CALCULADORA
 # ══════════════════════════════════════════════════════════════
-if pestana == "🚀 Calculadora":
+if pestana_actual == "calculadora":
     st.title("🚀 Presupuesto de Escalera Prefabricada")
     st.subheader("📐 Dimensiones de la Escalera")
 
@@ -809,7 +837,7 @@ if pestana == "🚀 Calculadora":
 # ══════════════════════════════════════════════════════════════
 #  DIBUJO TÉCNICO
 # ══════════════════════════════════════════════════════════════
-elif pestana == "📐 Dibujo Técnico":
+elif pestana_actual == "dibujo":
     st.title("📐 Dibujo Técnico de Escalera")
     st.info("💡 Los valores se sincronizan desde la Calculadora. También puedes cambiarlos aquí.")
 
@@ -870,72 +898,9 @@ elif pestana == "📐 Dibujo Técnico":
             plt.close(fig_plan)
 
 # ══════════════════════════════════════════════════════════════
-#  CATÁLOGO DE ESCALERAS
-# ══════════════════════════════════════════════════════════════
-elif pestana == "📋 Catálogo de Escaleras":
-    st.title("📋 Catálogo de Escaleras Prefabricadas")
-    st.markdown("Referencia de los tipos de escalera disponibles con sus características principales.")
-    st.markdown("---")
-
-    catalogo = [
-        {
-            "tipo": "Recta",
-            "icono": "📏",
-            "descripcion": "Escalera en línea recta de un solo tramo. Ideal para espacios con fondo suficiente.",
-            "ventajas": ["Fácil de fabricar e instalar", "Menor costo", "Estructura más sencilla"],
-            "dimensiones": "Fondo mínimo recomendado: 240 cm | Ancho mínimo: 80 cm",
-            "usos": "Casas, bodegas, locales comerciales",
-        },
-        {
-            "tipo": "En L con abanico",
-            "icono": "↩️",
-            "descripcion": "Escalera con un giro de 90° usando peldaños en abanico en la esquina.",
-            "ventajas": ["Ocupa menos fondo que la recta", "Giro suave con abanico", "Buena para espacios esquinados"],
-            "dimensiones": "Dos tramos + zona de abanico | Ancho mínimo: 90 cm",
-            "usos": "Casas de dos pisos, apartamentos",
-        },
-        {
-            "tipo": "En U con abanico",
-            "icono": "↪️",
-            "descripcion": "Escalera con dos giros de 90° formando una U, con abanicos en ambas esquinas.",
-            "ventajas": ["Compacta en planta", "Apta para espacios cuadrados", "Elegante apariencia"],
-            "dimensiones": "Tres tramos + dos abanicos | Ancho mínimo: 90 cm",
-            "usos": "Edificios, casas con poco fondo disponible",
-        },
-        {
-            "tipo": "Caracol",
-            "icono": "🌀",
-            "descripcion": "Escalera circular con núcleo central. Peldaños en cuña alrededor del eje.",
-            "ventajas": ["Mínimo espacio en planta", "Diseño arquitectónico llamativo", "Ideal para espacios reducidos"],
-            "dimensiones": "Diámetro mínimo: 120 cm | El ancho del peldaño define el diámetro",
-            "usos": "Acceso a terrazas, mezzanines, espacios de diseño",
-        },
-    ]
-
-    for item in catalogo:
-        with st.expander(f"{item['icono']} **{item['tipo']}**", expanded=True):
-            ca, cb = st.columns([2, 1])
-            with ca:
-                st.markdown(f"**Descripción:** {item['descripcion']}")
-                st.markdown(f"**📐 Dimensiones:** {item['dimensiones']}")
-                st.markdown(f"**🏠 Usos típicos:** {item['usos']}")
-                st.markdown("**✅ Ventajas:**")
-                for v in item['ventajas']:
-                    st.markdown(f"  - {v}")
-            with cb:
-                # Botón para ir directo a la calculadora con ese tipo
-                if st.button(f"🚀 Cotizar {item['tipo']}", key=f"cat_{item['tipo']}"):
-                    st.session_state['ultimo_tipo'] = item['tipo']
-                    st.info(f"Ve a 🚀 Calculadora y selecciona **{item['tipo']}**")
-        st.markdown("")
-
-    st.markdown("---")
-    st.info("💡 Selecciona un tipo y haz clic en **Cotizar** para ir directamente a la calculadora con ese diseño preseleccionado.")
-
-# ══════════════════════════════════════════════════════════════
 #  CONFIGURACIÓN DE COSTOS
 # ══════════════════════════════════════════════════════════════
-elif pestana == "💰 Configuración de Costos":
+elif pestana_actual == "config":
     st.title("💰 Configuración de Precios e Insumos")
 
     with st.form("form_precios"):
