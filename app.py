@@ -4,6 +4,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import io
+import os
+import json
+import sqlite3
 import base64
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
@@ -29,27 +32,120 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── PERSISTENCIA (SQLite) ────────────────────────────────────
+# Archivo local junto al script. Guarda config de precios/empresa
+# e historial de cotizaciones para que no se pierdan al reiniciar
+# la app o cerrar el navegador.
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "escaleras_pro.db")
+
+DEFAULT_PRECIOS = {
+    'cemento': 32000, 'mixto': 190000,
+    'varilla_38': 24000, 'grafil_14': 5000,
+    'alambre': 10000, 'pago_persona': 90000,
+    'cantidad_personas': 4, 'bulto_pena': 10000,
+    'cant_pena': 2, 'acarreo': 100000,
+    'grafil_cant': 2, 'alambre_kg': 1,
+    'gastos_indirectos_pct': 5.0,
+    'ganancia_pct': 30,
+    # bloques estructurales
+    'bloque_precio': 5200, 'bloque_cant': 0,
+    # datos empresa
+    'empresa_nombre': '', 'empresa_tel': '',
+    'empresa_dir': '', 'empresa_logo': None,
+    # orientación escalera
+    'orientacion': 'Derecha',
+}
+
+def _get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+def init_db():
+    with _get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                data TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS historial (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT, tipo TEXT,
+                alto_cm INTEGER, fondo_cm INTEGER, ancho_cm INTEGER,
+                escalones INTEGER, vol_m3 REAL,
+                costo_total TEXT, precio_venta TEXT
+            )
+        """)
+        conn.commit()
+
+def cargar_precios_db():
+    """Devuelve el dict de precios guardado en disco, o None si no hay nada aún."""
+    with _get_conn() as conn:
+        row = conn.execute("SELECT data FROM config WHERE id = 1").fetchone()
+    if not row:
+        return None
+    data = json.loads(row[0])
+    # el logo se guarda como base64 en el JSON; se reconstruye a bytes
+    if data.get('empresa_logo'):
+        data['empresa_logo'] = base64.b64decode(data['empresa_logo'])
+    # completa con defaults cualquier clave nueva que no exista en un guardado viejo
+    return {**DEFAULT_PRECIOS, **data}
+
+def guardar_precios_db(precios: dict):
+    """Persiste el dict de precios/empresa completo en disco."""
+    data = dict(precios)
+    if data.get('empresa_logo'):
+        data['empresa_logo'] = base64.b64encode(data['empresa_logo']).decode('ascii')
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO config (id, data) VALUES (1, ?) "
+            "ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+            (json.dumps(data),)
+        )
+        conn.commit()
+
+def cargar_historial_db():
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT fecha, tipo, alto_cm, fondo_cm, ancho_cm, escalones, "
+            "vol_m3, costo_total, precio_venta FROM historial ORDER BY id"
+        ).fetchall()
+    return [
+        {
+            "Fecha": r[0], "Tipo": r[1], "Alto (cm)": r[2],
+            "Fondo (cm)": r[3], "Ancho (cm)": r[4], "Escalones": r[5],
+            "Vol. m³": r[6], "Costo Total": r[7], "Precio Venta": r[8],
+        }
+        for r in rows
+    ]
+
+def guardar_historial_db(registro: dict):
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO historial (fecha, tipo, alto_cm, fondo_cm, ancho_cm, "
+            "escalones, vol_m3, costo_total, precio_venta) VALUES (?,?,?,?,?,?,?,?,?)",
+            (registro["Fecha"], registro["Tipo"], registro["Alto (cm)"],
+             registro["Fondo (cm)"], registro["Ancho (cm)"], registro["Escalones"],
+             registro["Vol. m³"], registro["Costo Total"], registro["Precio Venta"])
+        )
+        conn.commit()
+
+def limpiar_historial_db():
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM historial")
+        conn.commit()
+
+init_db()
+
 # ── ESTADO INICIAL ──────────────────────────────────────────
+# Al primer render de cada sesión, se carga lo que haya en disco
+# (si no hay nada guardado todavía, se usan los valores por defecto).
 if 'precios' not in st.session_state:
-    st.session_state['precios'] = {
-        'cemento': 32000, 'mixto': 190000,
-        'varilla_38': 24000, 'grafil_14': 5000,
-        'alambre': 10000, 'pago_persona': 90000,
-        'cantidad_personas': 4, 'bulto_pena': 10000,
-        'cant_pena': 2, 'acarreo': 100000,
-        'grafil_cant': 2, 'alambre_kg': 1,
-        'gastos_indirectos_pct': 5.0,
-        'ganancia_pct': 30,
-        # bloques estructurales
-        'bloque_precio': 5200, 'bloque_cant': 0,
-        # datos empresa
-        'empresa_nombre': '', 'empresa_tel': '',
-        'empresa_dir': '', 'empresa_logo': None,
-        # orientación escalera
-        'orientacion': 'Derecha',
-    }
+    st.session_state['precios'] = cargar_precios_db() or dict(DEFAULT_PRECIOS)
 if 'historial' not in st.session_state:
-    st.session_state['historial'] = []
+    st.session_state['historial'] = cargar_historial_db()
 
 # ── HELPERS ─────────────────────────────────────────────────
 def fmt(valor):
@@ -662,14 +758,16 @@ if pestana == "🚀 Calculadora":
     b1, b2 = st.columns([1, 3])
     with b1:
         if st.button("💾 GUARDAR EN HISTORIAL"):
-            st.session_state.historial.append({
+            nuevo_registro = {
                 "Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
                 "Tipo": tipo, "Alto (cm)": int(alt),
                 "Fondo (cm)": int(fondo), "Ancho (cm)": int(anc),
                 "Escalones": res['pasos'], "Vol. m³": res['vol'],
                 "Costo Total": fmt(costos['costo_total']),
                 "Precio Venta": fmt(costos['precio_venta']),
-            })
+            }
+            st.session_state.historial.append(nuevo_registro)
+            guardar_historial_db(nuevo_registro)
             st.toast("✅ Guardado en historial")
 
     # ── FORMULARIO PDF ──
@@ -903,7 +1001,8 @@ elif pestana == "💰 Configuración de Costos":
                 'empresa_nombre': emp_nombre, 'empresa_tel': emp_tel,
                 'empresa_dir': emp_dir, 'empresa_logo': logo_bytes,
             })
-            st.success("✅ Configuración actualizada correctamente.")
+            guardar_precios_db(st.session_state.precios)
+            st.success("✅ Configuración actualizada correctamente y guardada en disco.")
 
 # ══════════════════════════════════════════════════════════════
 #  HISTORIAL
@@ -919,6 +1018,7 @@ else:
                            mime='text/csv')
         if st.button("🗑️ Limpiar Historial"):
             st.session_state.historial = []
+            limpiar_historial_db()
             st.rerun()
     else:
         st.info("Aún no hay presupuestos guardados. Ve a la Calculadora y guarda uno.")
