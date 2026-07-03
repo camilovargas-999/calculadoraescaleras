@@ -769,7 +769,6 @@ def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orien
 # ══════════════════════════════════════════════════════════════
 OPCIONES_MENU = [
     "🚀 Calculadora", "📐 Dibujo Técnico",
-    "📋 Catálogo de Escaleras",
     "💰 Configuración de Costos", "📊 Historial"
 ]
 
@@ -785,11 +784,6 @@ def _boton_volver_inicio():
         _ir_a('inicio')
         st.rerun()
     st.markdown("---")
-
-st.sidebar.title(f"🏗️ {APP_NAME.upper()} {APP_VERSION}")
-if st.sidebar.button("🏠 Ir a Inicio"):
-    _ir_a('inicio')
-    st.rerun()
 
 if st.session_state['pagina'] == 'inicio':
     st.title(f"🏗️ {APP_NAME} {APP_VERSION}")
@@ -1118,70 +1112,6 @@ elif pestana == "📐 Dibujo Técnico":
                                mime="image/png")
         finally:
             plt.close(fig_plan)
-
-# ══════════════════════════════════════════════════════════════
-#  CATÁLOGO DE ESCALERAS
-# ══════════════════════════════════════════════════════════════
-elif pestana == "📋 Catálogo de Escaleras":
-    _boton_volver_inicio()
-    st.title("📋 Catálogo de Escaleras Prefabricadas")
-    st.markdown("Referencia de los tipos de escalera disponibles con sus características principales.")
-    st.markdown("---")
-
-    catalogo = [
-        {
-            "tipo": "Recta",
-            "icono": "📏",
-            "descripcion": "Escalera en línea recta de un solo tramo. Ideal para espacios con fondo suficiente.",
-            "ventajas": ["Fácil de fabricar e instalar", "Menor costo", "Estructura más sencilla"],
-            "dimensiones": "Fondo mínimo recomendado: 240 cm | Ancho mínimo: 80 cm",
-            "usos": "Casas, bodegas, locales comerciales",
-        },
-        {
-            "tipo": "En L con abanico",
-            "icono": "↩️",
-            "descripcion": "Escalera con un giro de 90° usando peldaños en abanico en la esquina.",
-            "ventajas": ["Ocupa menos fondo que la recta", "Giro suave con abanico", "Buena para espacios esquinados"],
-            "dimensiones": "Dos tramos + zona de abanico | Ancho mínimo: 90 cm",
-            "usos": "Casas de dos pisos, apartamentos",
-        },
-        {
-            "tipo": "En U con abanico",
-            "icono": "↪️",
-            "descripcion": "Escalera con dos giros de 90° formando una U, con abanicos en ambas esquinas.",
-            "ventajas": ["Compacta en planta", "Apta para espacios cuadrados", "Elegante apariencia"],
-            "dimensiones": "Tres tramos + dos abanicos | Ancho mínimo: 90 cm",
-            "usos": "Edificios, casas con poco fondo disponible",
-        },
-        {
-            "tipo": "Caracol",
-            "icono": "🌀",
-            "descripcion": "Escalera circular con núcleo central. Peldaños en cuña alrededor del eje.",
-            "ventajas": ["Mínimo espacio en planta", "Diseño arquitectónico llamativo", "Ideal para espacios reducidos"],
-            "dimensiones": "Diámetro mínimo: 120 cm | El ancho del peldaño define el diámetro",
-            "usos": "Acceso a terrazas, mezzanines, espacios de diseño",
-        },
-    ]
-
-    for item in catalogo:
-        with st.expander(f"{item['icono']} **{item['tipo']}**", expanded=True):
-            ca, cb = st.columns([2, 1])
-            with ca:
-                st.markdown(f"**Descripción:** {item['descripcion']}")
-                st.markdown(f"**📐 Dimensiones:** {item['dimensiones']}")
-                st.markdown(f"**🏠 Usos típicos:** {item['usos']}")
-                st.markdown("**✅ Ventajas:**")
-                for v in item['ventajas']:
-                    st.markdown(f"  - {v}")
-            with cb:
-                # Botón para ir directo a la calculadora con ese tipo
-                if st.button(f"🚀 Cotizar {item['tipo']}", key=f"cat_{item['tipo']}"):
-                    st.session_state['ultimo_tipo'] = item['tipo']
-                    st.info(f"Ve a 🚀 Calculadora y selecciona **{item['tipo']}**")
-        st.markdown("")
-
-    st.markdown("---")
-    st.info("💡 Selecciona un tipo y haz clic en **Cotizar** para ir directamente a la calculadora con ese diseño preseleccionado.")
 
 # ══════════════════════════════════════════════════════════════
 #  CONFIGURACIÓN DE COSTOS
