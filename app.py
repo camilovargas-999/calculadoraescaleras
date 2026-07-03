@@ -765,19 +765,52 @@ def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orien
     return buf.read()
 
 # ══════════════════════════════════════════════════════════════
-#  MENÚ PRINCIPAL
+#  MENÚ PRINCIPAL / NAVEGACIÓN
 # ══════════════════════════════════════════════════════════════
-st.sidebar.title(f"🏗️ {APP_NAME.upper()} {APP_VERSION}")
-pestana = st.sidebar.radio("Sección:", [
+OPCIONES_MENU = [
     "🚀 Calculadora", "📐 Dibujo Técnico",
     "📋 Catálogo de Escaleras",
     "💰 Configuración de Costos", "📊 Historial"
-])
+]
+
+if 'pagina' not in st.session_state:
+    st.session_state['pagina'] = 'inicio'
+
+def _ir_a(destino):
+    st.session_state['pagina'] = destino
+
+def _boton_volver_inicio():
+    """Botón para volver a la pantalla principal, se coloca al inicio de cada módulo."""
+    if st.button("🏠 Volver al inicio"):
+        _ir_a('inicio')
+        st.rerun()
+    st.markdown("---")
+
+st.sidebar.title(f"🏗️ {APP_NAME.upper()} {APP_VERSION}")
+if st.sidebar.button("🏠 Ir a Inicio"):
+    _ir_a('inicio')
+    st.rerun()
+
+if st.session_state['pagina'] == 'inicio':
+    st.title(f"🏗️ {APP_NAME} {APP_VERSION}")
+    st.subheader("¿Qué deseas hacer?")
+    opcion = st.selectbox(
+        "Selecciona una sección para ingresar:",
+        ["— Selecciona una opción —"] + OPCIONES_MENU,
+        key="selector_inicio"
+    )
+    if st.button("➡️ Ingresar", type="primary", disabled=(opcion == "— Selecciona una opción —")):
+        _ir_a(opcion)
+        st.rerun()
+    st.stop()
+
+pestana = st.session_state['pagina']
 
 # ══════════════════════════════════════════════════════════════
 #  CALCULADORA
 # ══════════════════════════════════════════════════════════════
 if pestana == "🚀 Calculadora":
+    _boton_volver_inicio()
     st.title(f"🚀 {APP_NAME} — Presupuesto de Escalera Prefabricada")
     st.subheader("📐 Dimensiones de la Escalera")
 
@@ -995,6 +1028,7 @@ if pestana == "🚀 Calculadora":
 #  DIBUJO TÉCNICO
 # ══════════════════════════════════════════════════════════════
 elif pestana == "📐 Dibujo Técnico":
+    _boton_volver_inicio()
     st.title("📐 Dibujo Técnico de Escalera")
     st.info("💡 Los valores se sincronizan desde la Calculadora. También puedes cambiarlos aquí.")
 
@@ -1089,6 +1123,7 @@ elif pestana == "📐 Dibujo Técnico":
 #  CATÁLOGO DE ESCALERAS
 # ══════════════════════════════════════════════════════════════
 elif pestana == "📋 Catálogo de Escaleras":
+    _boton_volver_inicio()
     st.title("📋 Catálogo de Escaleras Prefabricadas")
     st.markdown("Referencia de los tipos de escalera disponibles con sus características principales.")
     st.markdown("---")
@@ -1152,6 +1187,7 @@ elif pestana == "📋 Catálogo de Escaleras":
 #  CONFIGURACIÓN DE COSTOS
 # ══════════════════════════════════════════════════════════════
 elif pestana == "💰 Configuración de Costos":
+    _boton_volver_inicio()
     st.title("💰 Configuración de Precios e Insumos")
 
     with st.form("form_precios"):
@@ -1224,6 +1260,7 @@ elif pestana == "💰 Configuración de Costos":
 #  HISTORIAL
 # ══════════════════════════════════════════════════════════════
 else:
+    _boton_volver_inicio()
     st.title("📊 Historial de Presupuestos")
     if st.session_state.historial:
         df = pd.DataFrame(st.session_state.historial)
