@@ -177,7 +177,8 @@ def _pasos_rectos(largo_cm, huella_objetivo=25, huella_min=23):
         huella = largo_cm / pasos
     return pasos, huella
 
-def calcular_escalera_u(salida_cm, fondo_cm, llegada_cm, hueco_cm, alt_cm, anc_cm):
+def calcular_escalera_u(salida_cm, fondo_cm, llegada_cm, hueco_cm, alt_cm,
+                         ancho_salida_cm, ancho_llegada_cm):
     """
     Lógica real de obra para escalera "En U con abanico":
     1. Se resta el hueco del fondo a la salida y a la llegada (el giro
@@ -190,7 +191,13 @@ def calcular_escalera_u(salida_cm, fondo_cm, llegada_cm, hueco_cm, alt_cm, anc_c
        quede entre 16-22 cm. Si hay varias opciones válidas, se toma la
        del medio.
     4. Contrahuella final = altura / (total_pasos + 1).
+    5. Cada tramo (salida / giro / llegada) tiene su propio ancho
+       independiente. El ancho del giro es el mismo valor del hueco.
+       Volumen y refuerzo se calculan tramo por tramo y luego se suman
+       (ya no se usa un factor empírico único para toda la escalera).
     """
+    ancho_giro_cm = hueco_cm  # el hueco del giro define también su ancho
+
     salida_aj  = salida_cm  - hueco_cm
     llegada_aj = llegada_cm - hueco_cm
 
@@ -242,18 +249,34 @@ def calcular_escalera_u(salida_cm, fondo_cm, llegada_cm, hueco_cm, alt_cm, anc_c
     huella_giro_ok  = 35 <= huella_giro <= 70
     contrahuella_ok = 16 <= contrahuella <= 22
 
-    # ── Volumen: se aproxima con el recorrido horizontal total (salida+fondo+llegada) ──
-    alt   = alt_cm / 100
-    anc   = anc_cm / 100
-    recorrido_horizontal = (salida_cm + fondo_cm + llegada_cm) / 100
-    long_inclinada = math.sqrt(recorrido_horizontal**2 + alt**2)
+    # ── Volumen por tramo: cada tramo es su propia rampa con su propio
+    #    ancho. Altura ganada en el tramo = contrahuella * sus pasos. ──
     espesor = 0.055
-    vol = long_inclinada * anc * espesor * 1.70  # mismo factor empírico usado antes para "En U"
+
+    def _vol_tramo(n_pasos, huella_tramo_cm, ancho_tramo_cm):
+        horiz = (n_pasos * huella_tramo_cm) / 100
+        alto  = (n_pasos * contrahuella) / 100
+        long_inc = math.sqrt(horiz**2 + alto**2)
+        return long_inc, long_inc * (ancho_tramo_cm/100) * espesor
+
+    long_inc_salida,  vol_salida  = _vol_tramo(pasos_salida,  huella_salida,  ancho_salida_cm)
+    long_inc_giro,    vol_giro    = _vol_tramo(n_giro,        huella_giro,    ancho_giro_cm)
+    long_inc_llegada, vol_llegada = _vol_tramo(pasos_llegada, huella_llegada, ancho_llegada_cm)
+
+    long_inclinada = long_inc_salida + long_inc_giro + long_inc_llegada
+    vol = vol_salida + vol_giro + vol_llegada
 
     bls_cemento = math.ceil(vol * 7.5)
     mix_m3      = round(vol * 1.1, 2)
 
-    refuerzo = _calcular_refuerzo(pasos, anc_cm)
+    # ── Refuerzo por tramo: una varilla por paso, largo = su propio ancho + 12 cm ──
+    metros_salida  = pasos_salida  * (ancho_salida_cm + 12) / 100
+    metros_giro    = n_giro        * (ancho_giro_cm   + 12) / 100
+    metros_llegada = pasos_llegada * (ancho_llegada_cm + 12) / 100
+    metros_totales = metros_salida + metros_giro + metros_llegada
+    v38_barras_reales = metros_totales / 6
+    v38_barras        = math.ceil(v38_barras_reales)
+    grafil_cant       = v38_barras * 4
 
     return {
         'pasos': pasos,
@@ -263,15 +286,22 @@ def calcular_escalera_u(salida_cm, fondo_cm, llegada_cm, hueco_cm, alt_cm, anc_c
         'huella_llegada': round(huella_llegada, 1),
         'huella': round(huella_giro, 1),  # valor "principal" para compatibilidad con el resto de la app
         'contrahuella': round(contrahuella, 1),
+        'ancho_salida': ancho_salida_cm, 'ancho_giro': ancho_giro_cm, 'ancho_llegada': ancho_llegada_cm,
+        'vol_salida': round(vol_salida, 3), 'vol_giro': round(vol_giro, 3), 'vol_llegada': round(vol_llegada, 3),
         'long_inclinada': round(long_inclinada, 2),
         'vol': round(vol, 3),
         'bls_cemento': bls_cemento,
         'mix_m3': mix_m3,
+        'v38_barras_reales': round(v38_barras_reales, 2),
+        'v38_barras': v38_barras,
+        'grafil_cant': grafil_cant,
+        'long_varilla_salida_cm': ancho_salida_cm + 12,
+        'long_varilla_giro_cm': ancho_giro_cm + 12,
+        'long_varilla_llegada_cm': ancho_llegada_cm + 12,
         'huella_ok': huella_salida >= 23 and huella_llegada >= 23,
         'huella_giro_ok': huella_giro_ok,
         'contrahuella_ok': contrahuella_ok,
         'ajuste_relajado': ajuste_relajado,
-        **refuerzo,
     }
 
 def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
@@ -500,53 +530,57 @@ def dibujo_planta(tipo, alt_cm, fondo_cm, anc_cm, pasos, huella_cm, orientacion=
             h1 = u_segmentos['huella_salida'] / 100
             h2 = u_segmentos['huella_giro'] / 100
             h3 = u_segmentos['huella_llegada'] / 100
+            a1 = u_segmentos.get('ancho_salida', anc_cm) / 100
+            ag = u_segmentos.get('ancho_giro', anc_cm) / 100
+            a3 = u_segmentos.get('ancho_llegada', anc_cm) / 100
         else:
-            # Sin datos reales de tramo: aproximación anterior (partes iguales)
+            # Sin datos reales de tramo: aproximación anterior (partes iguales, mismo ancho)
             t1 = t2 = t3 = max(1, pasos // 3)
             h1 = h2 = h3 = huella
+            a1 = ag = a3 = anc
 
         l1, l2, l3 = t1*h1, t2*h2, t3*h3   # salida, giro, llegada
         x0, y0 = l1, l2
 
-        # Tramo 1: salida (horizontal, abajo)
-        ax.add_patch(patches.Rectangle((0, 0), l1, anc, linewidth=1.5,
+        # Tramo 1: salida (horizontal, abajo) — ancho propio a1
+        ax.add_patch(patches.Rectangle((0, 0), l1, a1, linewidth=1.5,
                      edgecolor=GRIS_OSCURO, facecolor=GRIS_CONCRETO, alpha=0.5, zorder=2))
         x = 0
         for i in range(t1 + 1):
-            ax.plot([x, x], [0, anc], color=GRIS_OSCURO, lw=0.7, zorder=3)
+            ax.plot([x, x], [0, a1], color=GRIS_OSCURO, lw=0.7, zorder=3)
             if i < t1:
-                ax.text(x + h1/2, anc/2, str(i+1), ha='center', va='center',
+                ax.text(x + h1/2, a1/2, str(i+1), ha='center', va='center',
                         fontsize=6.5, color=LINEA_CORTE)
             x += h1
 
-        # Tramo 2: giro (vertical, a la derecha) — pasos en abanico
-        ax.add_patch(patches.Rectangle((x0-anc, 0), anc, l2, linewidth=1.5,
+        # Tramo 2: giro (vertical, a la derecha) — ancho propio ag (= hueco)
+        ax.add_patch(patches.Rectangle((x0-ag, 0), ag, l2, linewidth=1.5,
                      edgecolor=GRIS_OSCURO, facecolor=GRIS_CONCRETO, alpha=0.6, zorder=2))
         y = 0
         for i in range(t2 + 1):
-            ax.plot([x0-anc, x0], [y, y], color=GRIS_OSCURO, lw=0.7, zorder=3)
+            ax.plot([x0-ag, x0], [y, y], color=GRIS_OSCURO, lw=0.7, zorder=3)
             if i < t2:
-                ax.text(x0-anc/2, y + h2/2, str(t1+i+1), ha='center', va='center',
+                ax.text(x0-ag/2, y + h2/2, str(t1+i+1), ha='center', va='center',
                         fontsize=6.5, color=LINEA_CORTE)
             y += h2
 
-        # Tramo 3: llegada (horizontal, arriba, regresa hacia la izquierda)
-        x3_ini = x0 - anc
-        ax.add_patch(patches.Rectangle((x3_ini - l3, y0-anc), l3, anc, linewidth=1.5,
+        # Tramo 3: llegada (horizontal, arriba, regresa hacia la izquierda) — ancho propio a3
+        x3_ini = x0 - ag
+        ax.add_patch(patches.Rectangle((x3_ini - l3, y0-a3), l3, a3, linewidth=1.5,
                      edgecolor=GRIS_OSCURO, facecolor=GRIS_CONCRETO, alpha=0.7, zorder=2))
         x = x3_ini
         for i in range(t3 + 1):
-            ax.plot([x, x], [y0-anc, y0], color=GRIS_OSCURO, lw=0.7, zorder=3)
+            ax.plot([x, x], [y0-a3, y0], color=GRIS_OSCURO, lw=0.7, zorder=3)
             if i < t3:
-                ax.text(x - h3/2, y0-anc/2, str(t1+t2+i+1), ha='center', va='center',
+                ax.text(x - h3/2, y0-a3/2, str(t1+t2+i+1), ha='center', va='center',
                         fontsize=6.5, color=LINEA_CORTE)
             x -= h3
 
-        for cx, cy, a1, a2 in [(x0-anc, 0, 0, 90), (x0-anc, y0-anc, 90, 180)]:
-            ax.add_patch(patches.Wedge((cx, cy), anc*0.6, a1, a2,
+        for cx, cy, r, a1_ang, a2_ang in [(x0-ag, 0, ag*0.6, 0, 90), (x0-ag, y0-a3, ag*0.6, 90, 180)]:
+            ax.add_patch(patches.Wedge((cx, cy), r, a1_ang, a2_ang,
                          facecolor='#CFD8DC', edgecolor=GRIS_OSCURO, lw=1.0, alpha=0.6, zorder=3))
 
-        ax.annotate("", xy=(l1*0.75, anc/2), xytext=(l1*0.1, anc/2),
+        ax.annotate("", xy=(l1*0.75, a1/2), xytext=(l1*0.1, a1/2),
                     arrowprops=dict(arrowstyle="-|>", color=ROJO_ACENTO, lw=1.5, mutation_scale=14))
 
         _dibujar_cota(ax, 0, -0.12, l1, -0.12, f"salida {l1*100:.0f} cm", offset=0.06)
@@ -555,7 +589,8 @@ def dibujo_planta(tipo, alt_cm, fondo_cm, anc_cm, pasos, huella_cm, orientacion=
 
         min_x = min(0, x3_ini - l3) - 0.30
         max_x = x0 + 0.25
-        ax.set_xlim(min_x, max_x); ax.set_ylim(-0.28, y0+0.28)
+        max_y = max(y0 + 0.28, a1 + 0.20)
+        ax.set_xlim(min_x, max_x); ax.set_ylim(-0.28, max_y)
 
     elif tipo == "Caracol":
         re_ = anc/2; ri_ = re_*0.25; cx, cy = re_, re_
@@ -713,6 +748,8 @@ def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orien
              f"{res['pasos_salida']} + {res['pasos_giro']} + {res['pasos_llegada']} = {res['pasos']}"],
             ["Huella salida / giro / llegada:",
              f"{res['huella_salida']:.0f} / {res['huella_giro']:.0f} / {res['huella_llegada']:.0f} cm"],
+            ["Ancho salida / giro / llegada:",
+             f"{res['ancho_salida']:.0f} / {res['ancho_giro']:.0f} / {res['ancho_llegada']:.0f} cm"],
         ]
     else:
         tec_data.append(["Número de escalones:", str(res['pasos'])])
@@ -816,20 +853,27 @@ if pestana == "🚀 Calculadora":
 
     if tipo == "En U con abanico":
         with c3:
-            st.caption("↓ Para escalera en U, detalla los 3 tramos y el hueco de giro abajo")
+            st.caption("↓ Cada tramo tiene su propia medida y su propio ancho")
         with c4:
-            anc  = st.number_input("Ancho (cm)", value=100.0, min_value=60.0, max_value=300.0, key="u_ancho")
+            st.caption(" ")
 
         st.markdown("##### 🔁 Tramos de la escalera en U (lógica real de obra)")
-        d1, d2, d3, d4 = st.columns(4)
-        with d1:
-            salida = st.number_input("Salida (cm)", value=185.0, min_value=60.0, max_value=500.0, key="u_salida")
-        with d2:
+        du1, du2, du3 = st.columns(3)
+        with du1:
+            st.markdown("**Salida**")
+            salida        = st.number_input("Salida (cm)", value=185.0, min_value=60.0, max_value=500.0, key="u_salida")
+            ancho_salida  = st.number_input("Ancho salida (cm)", value=100.0, min_value=60.0, max_value=300.0, key="u_ancho_salida")
+        with du2:
+            st.markdown("**Fondo / Giro**")
             fondo = st.number_input("Fondo / giro (cm)", value=172.0, min_value=60.0, max_value=400.0, key="u_fondo")
-        with d3:
-            llegada = st.number_input("Llegada (cm)", value=155.0, min_value=60.0, max_value=500.0, key="u_llegada")
-        with d4:
-            hueco = st.number_input("Hueco del giro (cm)", value=80.0, min_value=40.0, max_value=150.0, key="u_hueco")
+            hueco = st.number_input("Hueco / Ancho del giro (cm)", value=80.0, min_value=40.0, max_value=150.0, key="u_hueco")
+        with du3:
+            st.markdown("**Llegada**")
+            llegada        = st.number_input("Llegada (cm)", value=155.0, min_value=60.0, max_value=500.0, key="u_llegada")
+            ancho_llegada  = st.number_input("Ancho llegada (cm)", value=100.0, min_value=60.0, max_value=300.0, key="u_ancho_llegada")
+        # 'anc' genérico se usa en otras partes de la app (sync con Dibujo Técnico,
+        # historial); para U se toma el ancho de salida como referencia.
+        anc = ancho_salida
     else:
         with c3:
             fondo = st.number_input("Fondo / Largo (cm)", value=300.0, min_value=60.0, max_value=800.0)
@@ -863,7 +907,7 @@ if pestana == "🚀 Calculadora":
 
     st.markdown("---")
     if tipo == "En U con abanico":
-        res = calcular_escalera_u(salida, fondo, llegada, hueco, alt, anc)
+        res = calcular_escalera_u(salida, fondo, llegada, hueco, alt, ancho_salida, ancho_llegada)
     else:
         res = calcular_escalera(tipo, alt, fondo, anc)
     p   = st.session_state.precios
@@ -933,8 +977,16 @@ if pestana == "🚀 Calculadora":
 
     with col_b:
         st.markdown("#### 📦 Materiales")
-        st.caption(f"📏 Varilla 3/8\": {res['pasos']} varillas de {res['long_varilla_cm']} cm "
-                   f"= {res['v38_barras_reales']} barras de 6m → se compran {res['v38_barras']}")
+        if tipo == "En U con abanico":
+            st.caption(
+                f"📏 Varilla 3/8\": salida {res['pasos_salida']}×{res['long_varilla_salida_cm']:.0f} cm · "
+                f"giro {res['pasos_giro']}×{res['long_varilla_giro_cm']:.0f} cm · "
+                f"llegada {res['pasos_llegada']}×{res['long_varilla_llegada_cm']:.0f} cm "
+                f"= {res['v38_barras_reales']} barras de 6m → se compran {res['v38_barras']}"
+            )
+        else:
+            st.caption(f"📏 Varilla 3/8\": {res['pasos']} varillas de {res['long_varilla_cm']} cm "
+                       f"= {res['v38_barras_reales']} barras de 6m → se compran {res['v38_barras']}")
         st.dataframe(pd.DataFrame({
             "Material": ["Cemento (bultos)", "Mixto (m³)",
                          'Varilla 3/8" (barras 6m)',
@@ -1039,17 +1091,21 @@ elif pestana == "📐 Dibujo Técnico":
         with c3:
             st.caption("↓ Detalla los 3 tramos abajo")
         with c4:
-            anc_d = st.number_input("Ancho (cm)", value=st.session_state.get('ultimo_anc',100.0),
-                                     min_value=60.0, max_value=300.0, key="d_u_anc")
-        du1, du2, du3, du4 = st.columns(4)
+            st.caption(" ")
+        du1, du2, du3 = st.columns(3)
         with du1:
-            salida_d  = st.number_input("Salida (cm)", value=185.0, min_value=60.0, max_value=500.0, key="d_u_salida")
+            st.markdown("**Salida**")
+            salida_d       = st.number_input("Salida (cm)", value=185.0, min_value=60.0, max_value=500.0, key="d_u_salida")
+            ancho_salida_d = st.number_input("Ancho salida (cm)", value=100.0, min_value=60.0, max_value=300.0, key="d_u_ancho_salida")
         with du2:
-            fond_d    = st.number_input("Fondo / giro (cm)", value=172.0, min_value=60.0, max_value=400.0, key="d_u_fondo")
+            st.markdown("**Fondo / Giro**")
+            fond_d  = st.number_input("Fondo / giro (cm)", value=172.0, min_value=60.0, max_value=400.0, key="d_u_fondo")
+            hueco_d = st.number_input("Hueco / Ancho del giro (cm)", value=80.0, min_value=40.0, max_value=150.0, key="d_u_hueco")
         with du3:
-            llegada_d = st.number_input("Llegada (cm)", value=155.0, min_value=60.0, max_value=500.0, key="d_u_llegada")
-        with du4:
-            hueco_d   = st.number_input("Hueco del giro (cm)", value=80.0, min_value=40.0, max_value=150.0, key="d_u_hueco")
+            st.markdown("**Llegada**")
+            llegada_d       = st.number_input("Llegada (cm)", value=155.0, min_value=60.0, max_value=500.0, key="d_u_llegada")
+            ancho_llegada_d = st.number_input("Ancho llegada (cm)", value=100.0, min_value=60.0, max_value=300.0, key="d_u_ancho_llegada")
+        anc_d = ancho_salida_d  # ancho genérico de referencia (dibujo del perfil usa uno solo)
     else:
         with c3:
             fond_d = st.number_input("Fondo / Largo (cm)", value=st.session_state.get('ultimo_fondo',300.0),
@@ -1065,7 +1121,7 @@ elif pestana == "📐 Dibujo Técnico":
         st.session_state.precios['orientacion'] = orientacion_d
 
     if tipo_d == "En U con abanico":
-        res_d = calcular_escalera_u(salida_d, fond_d, llegada_d, hueco_d, alt_d, anc_d)
+        res_d = calcular_escalera_u(salida_d, fond_d, llegada_d, hueco_d, alt_d, ancho_salida_d, ancho_llegada_d)
     else:
         res_d = calcular_escalera(tipo_d, alt_d, fond_d, anc_d)
     if not res_d['huella_ok']:
@@ -1076,8 +1132,11 @@ elif pestana == "📐 Dibujo Técnico":
         fondo_perfil_d = salida_d + fond_d + llegada_d  # recorrido horizontal total, para el perfil
         u_segmentos_d = {
             'pasos_salida': res_d['pasos_salida'], 'huella_salida': res_d['huella_salida'],
+            'ancho_salida': res_d['ancho_salida'],
             'pasos_giro': res_d['pasos_giro'], 'huella_giro': res_d['huella_giro'],
+            'ancho_giro': res_d['ancho_giro'],
             'pasos_llegada': res_d['pasos_llegada'], 'huella_llegada': res_d['huella_llegada'],
+            'ancho_llegada': res_d['ancho_llegada'],
         }
     else:
         fondo_perfil_d = fond_d
