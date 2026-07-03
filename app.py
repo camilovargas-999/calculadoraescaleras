@@ -19,9 +19,10 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus import Image as RLImage
 
+APP_NAME    = "Escalerapp"
 APP_VERSION = "V10.0"
 
-st.set_page_config(page_title=f"Escaleras Pro {APP_VERSION}", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title=f"{APP_NAME} {APP_VERSION}", page_icon="🏗️", layout="wide")
 
 st.markdown("""
 <style>
@@ -152,6 +153,127 @@ def fmt(valor):
     """Formato COP sin decimales ni comas: COP 1.234.567"""
     return "COP {:,.0f}".format(int(round(valor))).replace(",", ".")
 
+def _calcular_refuerzo(pasos, anc_cm):
+    """Varilla 3/8: una por paso, longitud = ancho + 12 cm. Grafil 1/4 = varillas_38 x 4."""
+    long_varilla_cm = anc_cm + 12
+    long_varilla_m  = long_varilla_cm / 100
+    metros_totales  = pasos * long_varilla_m
+    v38_barras_reales = metros_totales / 6
+    v38_barras        = math.ceil(v38_barras_reales)
+    grafil_cant       = v38_barras * 4
+    return {
+        'long_varilla_cm': long_varilla_cm,
+        'v38_barras_reales': round(v38_barras_reales, 2),
+        'v38_barras': v38_barras,
+        'grafil_cant': grafil_cant,
+    }
+
+def _pasos_rectos(largo_cm, huella_objetivo=25, huella_min=23):
+    """Pasos rectangulares por defecto a huella_objetivo cm, sin bajar de huella_min."""
+    pasos = max(1, round(largo_cm / huella_objetivo))
+    huella = largo_cm / pasos
+    while huella < huella_min and pasos > 1:
+        pasos -= 1
+        huella = largo_cm / pasos
+    return pasos, huella
+
+def calcular_escalera_u(salida_cm, fondo_cm, llegada_cm, hueco_cm, alt_cm, anc_cm):
+    """
+    Lógica real de obra para escalera "En U con abanico":
+    1. Se resta el hueco del fondo a la salida y a la llegada (el giro
+       "come" ese espacio de cada tramo recto).
+    2. Los tramos rectos (salida/llegada ya ajustados) se dividen en
+       pasos de 25 cm de huella por defecto (mínimo 23 cm).
+    3. El giro se calcula por la periferia del hueco (hueco+fondo+hueco),
+       probando cantidades de pasos en abanico cuya huella quede entre
+       35-70 cm Y cuya contrahuella resultante (con el total de pasos)
+       quede entre 16-22 cm. Si hay varias opciones válidas, se toma la
+       del medio.
+    4. Contrahuella final = altura / (total_pasos + 1).
+    """
+    salida_aj  = salida_cm  - hueco_cm
+    llegada_aj = llegada_cm - hueco_cm
+
+    pasos_salida,  huella_salida  = _pasos_rectos(max(salida_aj, 1))
+    pasos_llegada, huella_llegada = _pasos_rectos(max(llegada_aj, 1))
+
+    periferia = hueco_cm + fondo_cm + hueco_cm
+
+    def _contrahuella_para(n_giro):
+        total = pasos_salida + n_giro + pasos_llegada
+        return alt_cm / (total + 1)
+
+    candidatos_estrictos = []
+    candidatos_solo_huella = []
+    for n in range(2, 21):
+        huella_giro = periferia / n
+        if not (35 <= huella_giro <= 70):
+            continue
+        candidatos_solo_huella.append(n)
+        contra = _contrahuella_para(n)
+        if 16 <= contra <= 22:
+            candidatos_estrictos.append(n)
+
+    ajuste_relajado = False
+    if candidatos_estrictos:
+        candidatos_estrictos.sort()
+        n_giro = candidatos_estrictos[len(candidatos_estrictos) // 2]  # valor mediano
+    elif candidatos_solo_huella:
+        # No hay ninguna opción que cumpla huella Y contrahuella a la vez:
+        # se prioriza la huella del giro (35-70) y se elige la que deje
+        # la contrahuella más cercana al rango 16-22.
+        ajuste_relajado = True
+        candidatos_solo_huella.sort(
+            key=lambda n: min(abs(_contrahuella_para(n) - 16), abs(_contrahuella_para(n) - 22))
+            if not (16 <= _contrahuella_para(n) <= 22) else 0
+        )
+        n_giro = candidatos_solo_huella[0]
+    else:
+        # Caso extremo: ninguna cantidad de pasos deja la huella del giro
+        # entre 35-70 cm con este hueco/fondo. Se usa el valor más cercano
+        # al centro del rango (52.5 cm) como último recurso.
+        ajuste_relajado = True
+        n_giro = max(2, round(periferia / 52.5))
+
+    huella_giro   = periferia / n_giro
+    pasos         = pasos_salida + n_giro + pasos_llegada
+    contrahuella  = alt_cm / (pasos + 1)
+
+    huella_giro_ok  = 35 <= huella_giro <= 70
+    contrahuella_ok = 16 <= contrahuella <= 22
+
+    # ── Volumen: se aproxima con el recorrido horizontal total (salida+fondo+llegada) ──
+    alt   = alt_cm / 100
+    anc   = anc_cm / 100
+    recorrido_horizontal = (salida_cm + fondo_cm + llegada_cm) / 100
+    long_inclinada = math.sqrt(recorrido_horizontal**2 + alt**2)
+    espesor = 0.055
+    vol = long_inclinada * anc * espesor * 1.70  # mismo factor empírico usado antes para "En U"
+
+    bls_cemento = math.ceil(vol * 7.5)
+    mix_m3      = round(vol * 1.1, 2)
+
+    refuerzo = _calcular_refuerzo(pasos, anc_cm)
+
+    return {
+        'pasos': pasos,
+        'pasos_salida': pasos_salida, 'pasos_giro': n_giro, 'pasos_llegada': pasos_llegada,
+        'huella_salida': round(huella_salida, 1),
+        'huella_giro': round(huella_giro, 1),
+        'huella_llegada': round(huella_llegada, 1),
+        'huella': round(huella_giro, 1),  # valor "principal" para compatibilidad con el resto de la app
+        'contrahuella': round(contrahuella, 1),
+        'long_inclinada': round(long_inclinada, 2),
+        'vol': round(vol, 3),
+        'bls_cemento': bls_cemento,
+        'mix_m3': mix_m3,
+        'huella_ok': huella_salida >= 23 and huella_llegada >= 23,
+        'huella_giro_ok': huella_giro_ok,
+        'contrahuella_ok': contrahuella_ok,
+        'ajuste_relajado': ajuste_relajado,
+        **refuerzo,
+    }
+
 def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
     """
     Lógica de cálculo v9.
@@ -161,14 +283,7 @@ def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
     - Varillas 3/8: una por paso, longitud = ancho + 12 cm (cambio #6)
     - Grafil 1/4: varillas_38 × 4 (cambio #8)
     """
-    # Número de pasos para la huella (fondo)
-    pasos = max(1, round(fondo_cm / 25))
-    huella = fondo_cm / pasos
-
-    # Ajuste: si huella < 23 cm, reducir pasos
-    while huella < 23 and pasos > 1:
-        pasos -= 1
-        huella = fondo_cm / pasos
+    pasos, huella = _pasos_rectos(fondo_cm)
 
     # Cambio #4: contrahuella se divide entre pasos+1
     contrahuella = alt_cm / (pasos + 1)
@@ -197,17 +312,7 @@ def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
     bls_cemento = math.ceil(vol * 7.5)
     mix_m3      = round(vol * 1.1, 2)
 
-    # ── Varillas 3/8 — Cambio #6 ──
-    # Una varilla por paso; longitud = ancho + 12 cm
-    long_varilla_cm = anc_cm + 12          # ej: 100+12 = 112 cm
-    long_varilla_m  = long_varilla_cm / 100
-    # Cuántas varillas de 6 m se necesitan para cubrir todos los pasos
-    metros_totales = pasos * long_varilla_m
-    v38_barras_reales = metros_totales / 6  # puede ser decimal
-    v38_barras        = math.ceil(v38_barras_reales)
-
-    # ── Grafil 1/4 — Cambio #8 ──
-    grafil_cant = v38_barras * 4
+    refuerzo = _calcular_refuerzo(pasos, anc_cm)
 
     return {
         'pasos': pasos,
@@ -217,11 +322,8 @@ def calcular_escalera(tipo, alt_cm, fondo_cm, anc_cm):
         'vol': round(vol, 3),
         'bls_cemento': bls_cemento,
         'mix_m3': mix_m3,
-        'v38_barras': v38_barras,
-        'v38_barras_reales': round(v38_barras_reales, 2),
-        'long_varilla_cm': long_varilla_cm,
-        'grafil_cant': grafil_cant,
         'huella_ok': huella >= 23,
+        **refuerzo,
     }
 
 def calcular_costos(res, p):
@@ -326,12 +428,12 @@ def dibujo_perfil_lateral(tipo, alt_cm, fondo_cm, anc_cm, pasos, huella_cm, cont
     ax.set_aspect('equal')
     ax.set_xlim(-0.35, fondo+0.35); ax.set_ylim(-0.25, alt+0.28)
     ax.axis('off')
-    fig.text(0.98, 0.01, f"Escaleras Pro {APP_VERSION}", ha='right', va='bottom',
+    fig.text(0.98, 0.01, f"{APP_NAME} {APP_VERSION}", ha='right', va='bottom',
              fontsize=7, color='#BDBDBD')
     plt.tight_layout()
     return fig
 
-def dibujo_planta(tipo, alt_cm, fondo_cm, anc_cm, pasos, huella_cm, orientacion="Derecha"):
+def dibujo_planta(tipo, alt_cm, fondo_cm, anc_cm, pasos, huella_cm, orientacion="Derecha", u_segmentos=None):
     huella = huella_cm / 100
     anc    = anc_cm / 100
     fondo  = fondo_cm / 100
@@ -391,44 +493,69 @@ def dibujo_planta(tipo, alt_cm, fondo_cm, anc_cm, pasos, huella_cm, orientacion=
         ax.set_xlim(-0.30, l1+0.25); ax.set_ylim(-0.28, max(l2,anc)+0.20)
 
     elif tipo == "En U con abanico":
-        t = pasos//3; lt = t*huella
-        ax.add_patch(patches.Rectangle((0,0), lt, anc, linewidth=1.5,
+        if u_segmentos:
+            t1 = max(1, u_segmentos['pasos_salida'])
+            t2 = max(1, u_segmentos['pasos_giro'])
+            t3 = max(1, u_segmentos['pasos_llegada'])
+            h1 = u_segmentos['huella_salida'] / 100
+            h2 = u_segmentos['huella_giro'] / 100
+            h3 = u_segmentos['huella_llegada'] / 100
+        else:
+            # Sin datos reales de tramo: aproximación anterior (partes iguales)
+            t1 = t2 = t3 = max(1, pasos // 3)
+            h1 = h2 = h3 = huella
+
+        l1, l2, l3 = t1*h1, t2*h2, t3*h3   # salida, giro, llegada
+        x0, y0 = l1, l2
+
+        # Tramo 1: salida (horizontal, abajo)
+        ax.add_patch(patches.Rectangle((0, 0), l1, anc, linewidth=1.5,
                      edgecolor=GRIS_OSCURO, facecolor=GRIS_CONCRETO, alpha=0.5, zorder=2))
         x = 0
-        for i in range(t+1):
-            ax.plot([x,x],[0,anc], color=GRIS_OSCURO, lw=0.7, zorder=3)
-            if i < t:
-                ax.text(x+huella/2, anc/2, str(i+1), ha='center', va='center',
+        for i in range(t1 + 1):
+            ax.plot([x, x], [0, anc], color=GRIS_OSCURO, lw=0.7, zorder=3)
+            if i < t1:
+                ax.text(x + h1/2, anc/2, str(i+1), ha='center', va='center',
                         fontsize=6.5, color=LINEA_CORTE)
-            x += huella
-        x0 = lt
-        ax.add_patch(patches.Rectangle((x0-anc,0), anc, lt, linewidth=1.5,
+            x += h1
+
+        # Tramo 2: giro (vertical, a la derecha) — pasos en abanico
+        ax.add_patch(patches.Rectangle((x0-anc, 0), anc, l2, linewidth=1.5,
                      edgecolor=GRIS_OSCURO, facecolor=GRIS_CONCRETO, alpha=0.6, zorder=2))
         y = 0
-        for i in range(t+1):
-            ax.plot([x0-anc,x0],[y,y], color=GRIS_OSCURO, lw=0.7, zorder=3)
-            if i < t:
-                ax.text(x0-anc/2, y+huella/2, str(t+i+1), ha='center', va='center',
+        for i in range(t2 + 1):
+            ax.plot([x0-anc, x0], [y, y], color=GRIS_OSCURO, lw=0.7, zorder=3)
+            if i < t2:
+                ax.text(x0-anc/2, y + h2/2, str(t1+i+1), ha='center', va='center',
                         fontsize=6.5, color=LINEA_CORTE)
-            y += huella
-        y0 = lt
-        ax.add_patch(patches.Rectangle((0,y0-anc), lt-anc, anc, linewidth=1.5,
+            y += h2
+
+        # Tramo 3: llegada (horizontal, arriba, regresa hacia la izquierda)
+        x3_ini = x0 - anc
+        ax.add_patch(patches.Rectangle((x3_ini - l3, y0-anc), l3, anc, linewidth=1.5,
                      edgecolor=GRIS_OSCURO, facecolor=GRIS_CONCRETO, alpha=0.7, zorder=2))
-        x = lt-anc
-        for i in range(t+1):
-            ax.plot([x,x],[y0-anc,y0], color=GRIS_OSCURO, lw=0.7, zorder=3)
-            if i < t:
-                ax.text(x-huella/2, y0-anc/2, str(2*t+i+1), ha='center', va='center',
+        x = x3_ini
+        for i in range(t3 + 1):
+            ax.plot([x, x], [y0-anc, y0], color=GRIS_OSCURO, lw=0.7, zorder=3)
+            if i < t3:
+                ax.text(x - h3/2, y0-anc/2, str(t1+t2+i+1), ha='center', va='center',
                         fontsize=6.5, color=LINEA_CORTE)
-            x -= huella
-        for cx, cy, a1, a2 in [(lt-anc,0,0,90),(lt-anc,lt-anc,90,180)]:
-            ax.add_patch(patches.Wedge((cx,cy), anc*0.6, a1, a2,
+            x -= h3
+
+        for cx, cy, a1, a2 in [(x0-anc, 0, 0, 90), (x0-anc, y0-anc, 90, 180)]:
+            ax.add_patch(patches.Wedge((cx, cy), anc*0.6, a1, a2,
                          facecolor='#CFD8DC', edgecolor=GRIS_OSCURO, lw=1.0, alpha=0.6, zorder=3))
-        ax.annotate("", xy=(lt*0.7,anc/2), xytext=(lt*0.1,anc/2),
+
+        ax.annotate("", xy=(l1*0.75, anc/2), xytext=(l1*0.1, anc/2),
                     arrowprops=dict(arrowstyle="-|>", color=ROJO_ACENTO, lw=1.5, mutation_scale=14))
-        _dibujar_cota(ax, 0,-0.12, lt,-0.12, f"{lt*100:.0f} cm", offset=0.06)
-        _dibujar_cota(ax, -0.14,0, -0.14,lt, "alt total", offset=0.05)
-        ax.set_xlim(-0.30, lt+0.25); ax.set_ylim(-0.28, lt+0.20)
+
+        _dibujar_cota(ax, 0, -0.12, l1, -0.12, f"salida {l1*100:.0f} cm", offset=0.06)
+        _dibujar_cota(ax, -0.14, 0, -0.14, l2, f"giro {l2*100:.0f} cm", offset=0.05)
+        _dibujar_cota(ax, x3_ini-l3, y0+0.06, x3_ini, y0+0.06, f"llegada {l3*100:.0f} cm", offset=0.05)
+
+        min_x = min(0, x3_ini - l3) - 0.30
+        max_x = x0 + 0.25
+        ax.set_xlim(min_x, max_x); ax.set_ylim(-0.28, y0+0.28)
 
     elif tipo == "Caracol":
         re_ = anc/2; ri_ = re_*0.25; cx, cy = re_, re_
@@ -466,7 +593,7 @@ def dibujo_planta(tipo, alt_cm, fondo_cm, anc_cm, pasos, huella_cm, orientacion=
     ax.set_aspect('equal'); ax.axis('off')
     if tipo != "Caracol" and orientacion == "Izquierda":
         ax.invert_xaxis()  # espeja el plano para reflejar el giro hacia la izquierda
-    fig.text(0.98, 0.01, f"Escaleras Pro {APP_VERSION}", ha='right', va='bottom',
+    fig.text(0.98, 0.01, f"{APP_NAME} {APP_VERSION}", ha='right', va='bottom',
              fontsize=7, color='#BDBDBD')
     plt.tight_layout()
     return fig
@@ -516,7 +643,7 @@ def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orien
         except Exception:
             logo_cell = ""
 
-    nombre_emp = emp.get('empresa_nombre', 'Escaleras Pro') or 'Escaleras Pro'
+    nombre_emp = emp.get('empresa_nombre', APP_NAME) or APP_NAME
     tel_emp    = emp.get('empresa_tel', '')
     dir_emp    = emp.get('empresa_dir', '')
 
@@ -579,8 +706,18 @@ def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orien
 
     tec_data = [
         ["Tipo de escalera:", tipo],
-        ["Número de escalones:", str(res['pasos'])],
-        ["Huella (ancho del paso):", f"{res['huella']:.0f} cm"],
+    ]
+    if tipo == "En U con abanico" and res.get('pasos_salida') is not None:
+        tec_data += [
+            ["Pasos salida / giro / llegada:",
+             f"{res['pasos_salida']} + {res['pasos_giro']} + {res['pasos_llegada']} = {res['pasos']}"],
+            ["Huella salida / giro / llegada:",
+             f"{res['huella_salida']:.0f} / {res['huella_giro']:.0f} / {res['huella_llegada']:.0f} cm"],
+        ]
+    else:
+        tec_data.append(["Número de escalones:", str(res['pasos'])])
+        tec_data.append(["Huella (ancho del paso):", f"{res['huella']:.0f} cm"])
+    tec_data += [
         ["Contrahuella (altura del paso):", f"{res['contrahuella']:.0f} cm"],
         ["Longitud inclinada:", f"{res['long_inclinada']} m"],
         ["Volumen de concreto:", f"{res['vol']} m³"],
@@ -620,7 +757,7 @@ def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orien
                        textColor=colors.HexColor("#B71C1C"), spaceAfter=4)))
     story.append(Spacer(1, 10))
     story.append(HRFlowable(width="100%", thickness=0.5, color=gris, spaceAfter=4))
-    story.append(Paragraph(f"Generado por Escaleras Pro {APP_VERSION}  —  {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+    story.append(Paragraph(f"Generado por {APP_NAME} {APP_VERSION}  —  {datetime.now().strftime('%d/%m/%Y %H:%M')}",
                            st_center))
 
     doc.build(story)
@@ -628,48 +765,20 @@ def generar_pdf(cliente, telefono, direccion, notas, tipo, res, costos, p, orien
     return buf.read()
 
 # ══════════════════════════════════════════════════════════════
-#  MENÚ PRINCIPAL / NAVEGACIÓN
+#  MENÚ PRINCIPAL
 # ══════════════════════════════════════════════════════════════
-PAGINAS = {
-    "🚀 Calculadora": "calculadora",
-    "📐 Dibujo Técnico": "dibujo",
-    "💰 Configuración de Costos": "config",
-    "📊 Historial": "historial",
-}
-
-if 'page' not in st.session_state:
-    st.session_state['page'] = 'inicio'
-
-def _ir_a_inicio():
-    st.session_state['page'] = 'inicio'
-
-# ── PANTALLA DE INICIO ──────────────────────────────────────
-if st.session_state['page'] == 'inicio':
-    st.title(f"🏗️ ESCALERAS PRO {APP_VERSION}")
-    st.markdown("Selecciona una sección para comenzar:")
-
-    seleccion = st.selectbox(
-        "Sección:",
-        ["Selecciona una opción..."] + list(PAGINAS.keys()),
-    )
-
-    if seleccion != "Selecciona una opción...":
-        st.session_state['page'] = PAGINAS[seleccion]
-        st.rerun()
-
-    st.stop()
-
-# ── BOTÓN DE REGRESO AL INICIO (visible en todas las pantallas) ──
-st.button("🏠 Inicio", on_click=_ir_a_inicio)
-st.markdown("---")
-
-pestana_actual = st.session_state['page']
+st.sidebar.title(f"🏗️ {APP_NAME.upper()} {APP_VERSION}")
+pestana = st.sidebar.radio("Sección:", [
+    "🚀 Calculadora", "📐 Dibujo Técnico",
+    "📋 Catálogo de Escaleras",
+    "💰 Configuración de Costos", "📊 Historial"
+])
 
 # ══════════════════════════════════════════════════════════════
 #  CALCULADORA
 # ══════════════════════════════════════════════════════════════
-if pestana_actual == "calculadora":
-    st.title("🚀 Presupuesto de Escalera Prefabricada")
+if pestana == "🚀 Calculadora":
+    st.title(f"🚀 {APP_NAME} — Presupuesto de Escalera Prefabricada")
     st.subheader("📐 Dimensiones de la Escalera")
 
     c1, c2, c3, c4 = st.columns(4)
@@ -677,10 +786,28 @@ if pestana_actual == "calculadora":
         tipo = st.selectbox("Diseño", ["Recta","En L con abanico","En U con abanico","Caracol"])
     with c2:
         alt  = st.number_input("Altura total (cm)", value=240.0, min_value=80.0, max_value=600.0)
-    with c3:
-        fondo = st.number_input("Fondo / Largo (cm)", value=300.0, min_value=60.0, max_value=800.0)
-    with c4:
-        anc  = st.number_input("Ancho (cm)", value=100.0, min_value=60.0, max_value=300.0)
+
+    if tipo == "En U con abanico":
+        with c3:
+            st.caption("↓ Para escalera en U, detalla los 3 tramos y el hueco de giro abajo")
+        with c4:
+            anc  = st.number_input("Ancho (cm)", value=100.0, min_value=60.0, max_value=300.0, key="u_ancho")
+
+        st.markdown("##### 🔁 Tramos de la escalera en U (lógica real de obra)")
+        d1, d2, d3, d4 = st.columns(4)
+        with d1:
+            salida = st.number_input("Salida (cm)", value=185.0, min_value=60.0, max_value=500.0, key="u_salida")
+        with d2:
+            fondo = st.number_input("Fondo / giro (cm)", value=172.0, min_value=60.0, max_value=400.0, key="u_fondo")
+        with d3:
+            llegada = st.number_input("Llegada (cm)", value=155.0, min_value=60.0, max_value=500.0, key="u_llegada")
+        with d4:
+            hueco = st.number_input("Hueco del giro (cm)", value=80.0, min_value=40.0, max_value=150.0, key="u_hueco")
+    else:
+        with c3:
+            fondo = st.number_input("Fondo / Largo (cm)", value=300.0, min_value=60.0, max_value=800.0)
+        with c4:
+            anc  = st.number_input("Ancho (cm)", value=100.0, min_value=60.0, max_value=300.0)
 
     # Cambio #10: cantidad de bloques en dimensiones
     b1_, b2_ = st.columns([1, 3])
@@ -708,39 +835,62 @@ if pestana_actual == "calculadora":
     st.session_state['ultimo_anc']   = anc
 
     st.markdown("---")
-    res = calcular_escalera(tipo, alt, fondo, anc)
+    if tipo == "En U con abanico":
+        res = calcular_escalera_u(salida, fondo, llegada, hueco, alt, anc)
+    else:
+        res = calcular_escalera(tipo, alt, fondo, anc)
     p   = st.session_state.precios
 
     # Advertencia / error si huella < 23 cm después del ajuste
     if not res['huella_ok']:
-        st.error(f"⛔ Con estas dimensiones la huella mínima posible es {res['huella']:.0f} cm "
-                 f"(mínimo requerido: 23 cm). Por favor aumenta el fondo de la escalera.")
+        if tipo == "En U con abanico":
+            st.error(f"⛔ Con estas medidas, la salida o la llegada quedan con huella menor a 23 cm "
+                     f"después de restar el hueco ({hueco:.0f} cm). Aumenta salida/llegada o reduce el hueco.")
+        else:
+            st.error(f"⛔ Con estas dimensiones la huella mínima posible es {res['huella']:.0f} cm "
+                     f"(mínimo requerido: 23 cm). Por favor aumenta el fondo de la escalera.")
         st.stop()
 
-    if res['huella'] < 25:
+    if tipo == "En U con abanico" and res.get('ajuste_relajado'):
+        st.warning("⚠️ No fue posible cumplir a la vez la huella del giro (35–70 cm) y la contrahuella "
+                   "(16–22 cm) con estas medidas. Se usó la combinación más cercana posible — revisa "
+                   "salida / fondo / llegada / hueco si quieres ajustar el resultado.")
+    elif tipo != "En U con abanico" and res['huella'] < 25:
         st.warning(f"⚠️ La huella ajustada es {res['huella']:.0f} cm. "
                    f"Se recomienda mínimo 25 cm para mayor comodidad.")
 
     costos = calcular_costos(res, p)
 
-    m1, m2 = st.columns(2)
-    m1.metric("💰 Precio de Venta",  fmt(costos['precio_venta']))
-    m2.metric("🔨 Costo Total Obra", fmt(costos['costo_total']))
+    # ── 2. SOLO PRECIO DE VENTA ──
+    st.metric("💰 Precio de Venta", fmt(costos['precio_venta']))
 
     st.markdown("---")
-    col_a, col_b, col_c = st.columns(3)
+
+    # ── 3. DATOS TÉCNICOS Y MATERIALES (SIN COSTOS) ──
+    col_a, col_b = st.columns(2)
 
     with col_a:
         st.markdown("#### 📐 Datos Técnicos")
-        st.write(f"• Escalones: **{res['pasos']}**")
-        st.write(f"• Contrahuella: **{res['contrahuella']:.0f} cm**")
-        st.write(f"• Huella: **{res['huella']:.0f} cm**")
+        if tipo == "En U con abanico":
+            st.write(f"• Pasos: salida **{res['pasos_salida']}** + giro **{res['pasos_giro']}** "
+                     f"+ llegada **{res['pasos_llegada']}** = **{res['pasos']}** total")
+            st.write(f"• Huella salida: **{res['huella_salida']:.0f} cm** · "
+                     f"giro: **{res['huella_giro']:.0f} cm** · llegada: **{res['huella_llegada']:.0f} cm**")
+            st.write(f"• Contrahuella: **{res['contrahuella']:.0f} cm**")
+        else:
+            st.write(f"• Escalones: **{res['pasos']}**")
+            st.write(f"• Contrahuella: **{res['contrahuella']:.0f} cm**")
+            st.write(f"• Huella: **{res['huella']:.0f} cm**")
         st.write(f"• Long. inclinada: **{res['long_inclinada']} m**")
         st.write(f"• Volumen concreto: **{res['vol']} m³**")
         if tipo != "Recta":
             st.write(f"• Orientación: **{orientacion}**")
-        ok_contra = 16 <= res['contrahuella'] <= 22
-        ok_huella = res['huella'] >= 25
+        if tipo == "En U con abanico":
+            ok_contra = res['contrahuella_ok']
+            ok_huella = res['huella_giro_ok']
+        else:
+            ok_contra = 16 <= res['contrahuella'] <= 22
+            ok_huella = res['huella'] >= 25
         if ok_contra and ok_huella:
             st.success("✅ Medidas dentro de norma")
         else:
@@ -748,7 +898,10 @@ if pestana_actual == "calculadora":
             if not ok_contra:
                 msgs.append(f"Contrahuella {res['contrahuella']:.0f} cm fuera de 16–22 cm")
             if not ok_huella:
-                msgs.append(f"Huella {res['huella']:.0f} cm < 25 cm recomendado")
+                if tipo == "En U con abanico":
+                    msgs.append(f"Huella del giro {res['huella_giro']:.0f} cm fuera de 35–70 cm")
+                else:
+                    msgs.append(f"Huella {res['huella']:.0f} cm < 25 cm recomendado")
             st.warning("⚠️ " + " | ".join(msgs))
 
     with col_b:
@@ -762,44 +915,11 @@ if pestana_actual == "calculadora":
                          "Arena de Peña (bultos)", "Bloques estructurales"],
             "Cant.": [res['bls_cemento'], res['mix_m3'], res['v38_barras'],
                       res['grafil_cant'], p['alambre_kg'], p['cant_pena'], p['bloque_cant']],
-            "Costo": [fmt(costos['costo_cemento']), fmt(costos['costo_mixto']),
-                      fmt(costos['costo_v38']),     fmt(costos['costo_grafil']),
-                      fmt(costos['costo_alambre']), fmt(costos['costo_pena']),
-                      fmt(costos['costo_bloque'])],
         }), use_container_width=True, hide_index=True)
 
-    with col_c:
-        st.markdown("#### 💸 Desglose")
-        st.write(f"• Materiales: **{fmt(costos['costo_materiales'])}**")
-        st.write(f"• Mano de obra ({int(p['cantidad_personas'])} pers.): **{fmt(costos['costo_mo'])}**")
-        st.write(f"• Acarreo: **{fmt(costos['costo_acarreo'])}**")
-        st.write(f"• Costo Directo: **{fmt(costos['costo_directo'])}**")
-        pct_i = int(p.get('gastos_indirectos_pct', 5))
-        st.write(f"• G. Indirectos ({pct_i}%): **{fmt(costos['gastos_indirectos'])}**")
-        st.markdown("---")
-        st.success(f"**Costo Total: {fmt(costos['costo_total'])}**")
-        st.info(f"**Precio Venta: {fmt(costos['precio_venta'])}**")
-
     st.markdown("---")
 
-    # ── BOTÓN GUARDAR ──
-    b1, b2 = st.columns([1, 3])
-    with b1:
-        if st.button("💾 GUARDAR EN HISTORIAL"):
-            nuevo_registro = {
-                "Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                "Tipo": tipo, "Alto (cm)": int(alt),
-                "Fondo (cm)": int(fondo), "Ancho (cm)": int(anc),
-                "Escalones": res['pasos'], "Vol. m³": res['vol'],
-                "Costo Total": fmt(costos['costo_total']),
-                "Precio Venta": fmt(costos['precio_venta']),
-            }
-            st.session_state.historial.append(nuevo_registro)
-            guardar_historial_db(nuevo_registro)
-            st.toast("✅ Guardado en historial")
-
-    # ── FORMULARIO PDF ──
-    st.markdown("---")
+    # ── 4. GENERAR COTIZACIÓN (PDF) ──
     st.markdown("#### 📄 Generar Cotización PDF")
     with st.form("form_cotizacion"):
         fc1, fc2 = st.columns(2)
@@ -834,10 +954,47 @@ if pestana_actual == "calculadora":
                 mime="application/pdf"
             )
 
+    st.markdown("---")
+
+    # ── 5. TÉCNICOS CON VALOR TOTAL Y COSTO DE LA OBRA (DESGLOSE) ──
+    st.markdown("#### 🔨 Costeo de la Obra")
+    st.metric("🔨 Costo Total Obra", fmt(costos['costo_total']))
+
+    col_c = st.container()
+    with col_c:
+        st.markdown("#### 💸 Desglose")
+        st.write(f"• Materiales: **{fmt(costos['costo_materiales'])}**")
+        st.write(f"• Mano de obra ({int(p['cantidad_personas'])} pers.): **{fmt(costos['costo_mo'])}**")
+        st.write(f"• Acarreo: **{fmt(costos['costo_acarreo'])}**")
+        st.write(f"• Costo Directo: **{fmt(costos['costo_directo'])}**")
+        pct_i = int(p.get('gastos_indirectos_pct', 5))
+        st.write(f"• G. Indirectos ({pct_i}%): **{fmt(costos['gastos_indirectos'])}**")
+        st.markdown("---")
+        st.success(f"**Costo Total: {fmt(costos['costo_total'])}**")
+        st.info(f"**Precio Venta: {fmt(costos['precio_venta'])}**")
+
+    st.markdown("---")
+
+    # ── 6. GUARDAR EN HISTORIAL ──
+    b1, b2 = st.columns([1, 3])
+    with b1:
+        if st.button("💾 GUARDAR EN HISTORIAL"):
+            nuevo_registro = {
+                "Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                "Tipo": tipo, "Alto (cm)": int(alt),
+                "Fondo (cm)": int(fondo), "Ancho (cm)": int(anc),
+                "Escalones": res['pasos'], "Vol. m³": res['vol'],
+                "Costo Total": fmt(costos['costo_total']),
+                "Precio Venta": fmt(costos['precio_venta']),
+            }
+            st.session_state.historial.append(nuevo_registro)
+            guardar_historial_db(nuevo_registro)
+            st.toast("✅ Guardado en historial")
+
 # ══════════════════════════════════════════════════════════════
 #  DIBUJO TÉCNICO
 # ══════════════════════════════════════════════════════════════
-elif pestana_actual == "dibujo":
+elif pestana == "📐 Dibujo Técnico":
     st.title("📐 Dibujo Técnico de Escalera")
     st.info("💡 Los valores se sincronizan desde la Calculadora. También puedes cambiarlos aquí.")
 
@@ -849,12 +1006,29 @@ elif pestana_actual == "dibujo":
     with c2:
         alt_d  = st.number_input("Altura total (cm)", value=st.session_state.get('ultimo_alt',240.0),
                                   min_value=80.0, max_value=600.0, key="d_alt")
-    with c3:
-        fond_d = st.number_input("Fondo / Largo (cm)", value=st.session_state.get('ultimo_fondo',300.0),
-                                  min_value=60.0, max_value=800.0, key="d_fondo")
-    with c4:
-        anc_d  = st.number_input("Ancho (cm)", value=st.session_state.get('ultimo_anc',100.0),
-                                  min_value=60.0, max_value=300.0, key="d_anc")
+
+    if tipo_d == "En U con abanico":
+        with c3:
+            st.caption("↓ Detalla los 3 tramos abajo")
+        with c4:
+            anc_d = st.number_input("Ancho (cm)", value=st.session_state.get('ultimo_anc',100.0),
+                                     min_value=60.0, max_value=300.0, key="d_u_anc")
+        du1, du2, du3, du4 = st.columns(4)
+        with du1:
+            salida_d  = st.number_input("Salida (cm)", value=185.0, min_value=60.0, max_value=500.0, key="d_u_salida")
+        with du2:
+            fond_d    = st.number_input("Fondo / giro (cm)", value=172.0, min_value=60.0, max_value=400.0, key="d_u_fondo")
+        with du3:
+            llegada_d = st.number_input("Llegada (cm)", value=155.0, min_value=60.0, max_value=500.0, key="d_u_llegada")
+        with du4:
+            hueco_d   = st.number_input("Hueco del giro (cm)", value=80.0, min_value=40.0, max_value=150.0, key="d_u_hueco")
+    else:
+        with c3:
+            fond_d = st.number_input("Fondo / Largo (cm)", value=st.session_state.get('ultimo_fondo',300.0),
+                                      min_value=60.0, max_value=800.0, key="d_fondo")
+        with c4:
+            anc_d  = st.number_input("Ancho (cm)", value=st.session_state.get('ultimo_anc',100.0),
+                                      min_value=60.0, max_value=300.0, key="d_anc")
 
     orientacion_d = st.session_state.precios.get('orientacion', 'Derecha')
     if tipo_d != "Recta":
@@ -862,10 +1036,24 @@ elif pestana_actual == "dibujo":
                                   index=["Derecha", "Izquierda"].index(orientacion_d), key="d_orientacion")
         st.session_state.precios['orientacion'] = orientacion_d
 
-    res_d = calcular_escalera(tipo_d, alt_d, fond_d, anc_d)
+    if tipo_d == "En U con abanico":
+        res_d = calcular_escalera_u(salida_d, fond_d, llegada_d, hueco_d, alt_d, anc_d)
+    else:
+        res_d = calcular_escalera(tipo_d, alt_d, fond_d, anc_d)
     if not res_d['huella_ok']:
         st.error("⛔ La huella resultante es menor a 23 cm. Aumenta el fondo.")
         st.stop()
+
+    if tipo_d == "En U con abanico":
+        fondo_perfil_d = salida_d + fond_d + llegada_d  # recorrido horizontal total, para el perfil
+        u_segmentos_d = {
+            'pasos_salida': res_d['pasos_salida'], 'huella_salida': res_d['huella_salida'],
+            'pasos_giro': res_d['pasos_giro'], 'huella_giro': res_d['huella_giro'],
+            'pasos_llegada': res_d['pasos_llegada'], 'huella_llegada': res_d['huella_llegada'],
+        }
+    else:
+        fondo_perfil_d = fond_d
+        u_segmentos_d = None
 
     st.markdown("---")
     tab1, tab2 = st.tabs(["📏 Perfil Lateral", "🗺️ Vista en Planta"])
@@ -873,7 +1061,7 @@ elif pestana_actual == "dibujo":
     with tab1:
         st.markdown(f"**{tipo_d}** · {res_d['pasos']} escalones · "
                     f"Huella {res_d['huella']:.0f} cm · Contrahuella {res_d['contrahuella']:.0f} cm")
-        fig_lat = dibujo_perfil_lateral(tipo_d, alt_d, fond_d, anc_d,
+        fig_lat = dibujo_perfil_lateral(tipo_d, alt_d, fondo_perfil_d, anc_d,
                                         res_d['pasos'], res_d['huella'], res_d['contrahuella'])
         try:
             st.pyplot(fig_lat, use_container_width=True)
@@ -887,7 +1075,7 @@ elif pestana_actual == "dibujo":
     with tab2:
         st.markdown(f"**{tipo_d}** · Ancho {anc_d:.0f} cm · {res_d['pasos']} escalones")
         fig_plan = dibujo_planta(tipo_d, alt_d, fond_d, anc_d, res_d['pasos'], res_d['huella'],
-                                  orientacion_d)
+                                  orientacion_d, u_segmentos_d)
         try:
             st.pyplot(fig_plan, use_container_width=True)
             st.download_button("⬇️ Descargar Vista en Planta (PNG)",
@@ -898,9 +1086,72 @@ elif pestana_actual == "dibujo":
             plt.close(fig_plan)
 
 # ══════════════════════════════════════════════════════════════
+#  CATÁLOGO DE ESCALERAS
+# ══════════════════════════════════════════════════════════════
+elif pestana == "📋 Catálogo de Escaleras":
+    st.title("📋 Catálogo de Escaleras Prefabricadas")
+    st.markdown("Referencia de los tipos de escalera disponibles con sus características principales.")
+    st.markdown("---")
+
+    catalogo = [
+        {
+            "tipo": "Recta",
+            "icono": "📏",
+            "descripcion": "Escalera en línea recta de un solo tramo. Ideal para espacios con fondo suficiente.",
+            "ventajas": ["Fácil de fabricar e instalar", "Menor costo", "Estructura más sencilla"],
+            "dimensiones": "Fondo mínimo recomendado: 240 cm | Ancho mínimo: 80 cm",
+            "usos": "Casas, bodegas, locales comerciales",
+        },
+        {
+            "tipo": "En L con abanico",
+            "icono": "↩️",
+            "descripcion": "Escalera con un giro de 90° usando peldaños en abanico en la esquina.",
+            "ventajas": ["Ocupa menos fondo que la recta", "Giro suave con abanico", "Buena para espacios esquinados"],
+            "dimensiones": "Dos tramos + zona de abanico | Ancho mínimo: 90 cm",
+            "usos": "Casas de dos pisos, apartamentos",
+        },
+        {
+            "tipo": "En U con abanico",
+            "icono": "↪️",
+            "descripcion": "Escalera con dos giros de 90° formando una U, con abanicos en ambas esquinas.",
+            "ventajas": ["Compacta en planta", "Apta para espacios cuadrados", "Elegante apariencia"],
+            "dimensiones": "Tres tramos + dos abanicos | Ancho mínimo: 90 cm",
+            "usos": "Edificios, casas con poco fondo disponible",
+        },
+        {
+            "tipo": "Caracol",
+            "icono": "🌀",
+            "descripcion": "Escalera circular con núcleo central. Peldaños en cuña alrededor del eje.",
+            "ventajas": ["Mínimo espacio en planta", "Diseño arquitectónico llamativo", "Ideal para espacios reducidos"],
+            "dimensiones": "Diámetro mínimo: 120 cm | El ancho del peldaño define el diámetro",
+            "usos": "Acceso a terrazas, mezzanines, espacios de diseño",
+        },
+    ]
+
+    for item in catalogo:
+        with st.expander(f"{item['icono']} **{item['tipo']}**", expanded=True):
+            ca, cb = st.columns([2, 1])
+            with ca:
+                st.markdown(f"**Descripción:** {item['descripcion']}")
+                st.markdown(f"**📐 Dimensiones:** {item['dimensiones']}")
+                st.markdown(f"**🏠 Usos típicos:** {item['usos']}")
+                st.markdown("**✅ Ventajas:**")
+                for v in item['ventajas']:
+                    st.markdown(f"  - {v}")
+            with cb:
+                # Botón para ir directo a la calculadora con ese tipo
+                if st.button(f"🚀 Cotizar {item['tipo']}", key=f"cat_{item['tipo']}"):
+                    st.session_state['ultimo_tipo'] = item['tipo']
+                    st.info(f"Ve a 🚀 Calculadora y selecciona **{item['tipo']}**")
+        st.markdown("")
+
+    st.markdown("---")
+    st.info("💡 Selecciona un tipo y haz clic en **Cotizar** para ir directamente a la calculadora con ese diseño preseleccionado.")
+
+# ══════════════════════════════════════════════════════════════
 #  CONFIGURACIÓN DE COSTOS
 # ══════════════════════════════════════════════════════════════
-elif pestana_actual == "config":
+elif pestana == "💰 Configuración de Costos":
     st.title("💰 Configuración de Precios e Insumos")
 
     with st.form("form_precios"):
